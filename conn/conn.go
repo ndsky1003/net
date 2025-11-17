@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -37,8 +36,8 @@ type Conn struct {
 	handler   Handler
 	opt       *Option
 
-	l    sync.Mutex //protect under
-	done chan struct{}
+	closed atomic.Bool // 原子状态标记
+	done   chan struct{}
 }
 
 func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
@@ -48,7 +47,7 @@ func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 		SetSendChanSize(100).
 		SetMaxFrameSize(64 * 1024).
 		Merge(opts...)
-	return &Conn{
+	c := &Conn{
 		Conn:     conn,
 		r:        bufio.NewReader(conn),
 		w:        bufio.NewWriter(conn),
@@ -57,6 +56,8 @@ func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 		done:     make(chan struct{}),
 		sendChan: make(chan *msg, *opt.SendChanSize),
 	}
+	c.closed.Store(false)
+	return c
 }
 
 // WARNING: 这个函数是非线程安全的，需要外部调用者保证
@@ -107,15 +108,18 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	return
 }
 
-func (this *Conn) Send(data []byte, opts ...*Option) error {
-	this.l.Lock()
-	sendChan := this.sendChan
-	this.l.Unlock()
-	if sendChan == nil {
+func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
+	if this.closed.Load() {
 		return fmt.Errorf("connection closed")
 	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("connection closed")
+		}
+	}()
 	select {
-	case sendChan <- &msg{
+	case this.sendChan <- &msg{ //如果 Close() 先执行：sendChan 被关闭，select 会检测到通道关闭并panic
 		flag: flag_msg,
 		data: data,
 		opt:  Options().Merge(this.opt).Merge(opts...),
@@ -159,29 +163,33 @@ func (this *Conn) writePump() (err error) {
 	atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
 	ticker := time.NewTicker(*this.opt.HeartInterval)
 	defer ticker.Stop()
-	this.l.Lock()
-	sendChan := this.sendChan
-	this.l.Unlock()
 	for {
 		select {
 		case <-this.done:
 			return
-		case msg, ok := <-sendChan:
+		case msg, ok := <-this.sendChan:
 			if !ok {
+				err = fmt.Errorf("sendChan has exhaust")
 				return
+			}
+			if this.closed.Load() { // 额外检查
+				return fmt.Errorf("connection closed ")
 			}
 			if err = this.write(msg.flag, msg.data, msg.opt); err != nil {
 				return
 			}
 		case <-ticker.C:
-			usage := float64(len(sendChan)) / float64(cap(sendChan))
+			if this.closed.Load() { // 额外检查
+				return fmt.Errorf("connection closed ")
+			}
+			usage := float64(len(this.sendChan)) / float64(cap(this.sendChan))
 			if usage > 0.8 {
 				log.Printf("send buffer usage: %.1f%%, consider increasing size", usage*100)
 			}
-			now := time.Now()
-			if now.Sub(time.Unix(0, atomic.LoadInt64(&this.pong_time))) > *this.opt.HeartInterval {
-				err = fmt.Errorf("pong timeout")
-				return
+			lastPongNano := atomic.LoadInt64(&this.pong_time)
+			currentNano := time.Now().UnixNano()
+			if (currentNano - lastPongNano) > int64(*this.opt.HeartInterval) {
+				return fmt.Errorf("pong timeout")
 			}
 			if err = this.ping(); err != nil {
 				return
@@ -190,36 +198,55 @@ func (this *Conn) writePump() (err error) {
 	}
 }
 
-func (this *Conn) readPump() (err error) {
-	for err == nil {
+func (this *Conn) readPump() error {
+	for {
 		select {
 		case <-this.done:
-			return
+			return fmt.Errorf("connection closed")
 		default:
-			var flag byte
-			var body []byte
-			flag, body, err = this.read()
+			flag, body, err := this.read()
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					continue
+				}
+				return err
+			}
 			atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
-			if flag&flag_msg == flag_msg && this.handler != nil {
-				go this.handler.HandleMsg(body)
-			} else {
-				err = this.pong()
+			switch flag {
+			case flag_msg:
+				if this.handler != nil {
+					go func() {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("handler panic: %v", r)
+							}
+						}()
+						this.handler.HandleMsg(body)
+					}()
+				}
+			case flag_ping:
+				if this.closed.Load() {
+					return fmt.Errorf("connection closed")
+				}
+				if err := this.pong(); err != nil {
+					return err
+				}
+			case flag_pong:
+				// 正常处理，时间已更新
+			default:
+				return fmt.Errorf("unknown flag: %d", flag)
 			}
 		}
 	}
-	return
 }
 
 func (this *Conn) Close() {
-	this.l.Lock()
-	defer this.l.Unlock()
-	if this.done == nil {
+	if !this.closed.CompareAndSwap(false, true) {
 		return
 	}
 	close(this.done)
 	this.Conn.Close()
 	close(this.sendChan)
-
-	this.done = nil
-	this.sendChan = nil
+	// this.done = nil
+	// this.sendChan = nil // 设置为nil有可能造成panic，读写都会
 }
