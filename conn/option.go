@@ -5,6 +5,8 @@ import "time"
 type Option struct {
 	ReadDeadline  *time.Duration
 	WriteDeadline *time.Duration
+	HeartInterval *time.Duration
+	SendChanSize  *int
 	// 适合大多数消息传递场景
 	//opt := Options().SetMaxFrameSize(64 * 1024)  // 64KB
 	// 适合大文件分块传输
@@ -33,6 +35,16 @@ func (this *Option) SetDeadline(t time.Duration) *Option {
 	return this
 }
 
+func (this *Option) SetHeartInterval(t time.Duration) *Option {
+	this.HeartInterval = &t
+	return this
+}
+
+func (this *Option) SetSendChanSize(t int) *Option {
+	this.SendChanSize = &t
+	return this
+}
+
 func (this *Option) SetMaxFrameSize(delta uint64) *Option {
 	this.MaxFrameSize = &delta
 	return this
@@ -49,6 +61,14 @@ func (this *Option) merge(delta *Option) *Option {
 
 	if delta.WriteDeadline != nil {
 		this.WriteDeadline = delta.WriteDeadline
+	}
+
+	if delta.HeartInterval != nil {
+		this.HeartInterval = delta.HeartInterval
+	}
+
+	if delta.SendChanSize != nil {
+		this.SendChanSize = delta.SendChanSize
 	}
 
 	if delta.MaxFrameSize != nil {
