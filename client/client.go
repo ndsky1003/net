@@ -65,7 +65,7 @@ func (this *Client) keepAlive() {
 			time.Sleep(*this.opt.ReconnectInterval)
 			continue
 		}
-		conn := conn.New(conn_raw, this)
+		conn := conn.New(conn_raw, this, &this.opt.Option)
 
 		err = this.serve(conn)
 		if err != nil {
@@ -152,6 +152,7 @@ func (this *Client) verify(conn *conn.Conn) (err error) {
 
 func (this *Client) serve(conn *conn.Conn) (err error) {
 	if err = this.verify(conn); err != nil {
+		conn.Close()
 		return
 	}
 	this.setConn(conn)
