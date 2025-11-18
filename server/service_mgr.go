@@ -1,29 +1,46 @@
 package server
 
 import (
+	"log"
+
 	"github.com/ndsky1003/net/conn"
 )
 
-// ServiceManager 服务管理策略接口
-type ServiceManager interface {
+// IServiceManager 服务管理策略接口
+type IServiceManager interface {
+
 	// OnConnect 当新服务连接时调用
-	OnConnect(conn *conn.Conn, serviceID string) error
+	OnConnect(sid string, conn *conn.Conn) error
 
 	// OnDisconnect 当服务断开时调用
-	OnDisconnect(serviceID string)
+	OnDisconnect(serviceID string, err error) error
 
 	// OnMessage 当收到服务消息时调用
-	OnMessage(serviceID string, data []byte) error
+	OnMessage(sid string, data []byte) error
 
-	// GetService 获取服务信息
-	// GetService(serviceID string) (ServiceInfo, bool)
+	//清理资源
+	Close() error
+}
 
-	// ListServices 列出所有服务
-	// ListServices() []ServiceInfo
+type ServiceManager struct {
+}
 
-	// Broadcast 向所有服务广播消息
-	Broadcast(data []byte) error
+func (this ServiceManager) OnConnect(sid string, conn *conn.Conn) error {
+	log.Printf("Service %s connected", sid)
+	return nil
+}
 
-	// SendToService 向特定服务发送消息
-	SendToService(serviceID string, data []byte) error
+func (this ServiceManager) OnDisconnect(sid string, err error) error {
+	log.Printf("Service %s connected", sid)
+	return nil
+}
+
+func (this ServiceManager) OnMessage(sid string, data []byte) error {
+	log.Printf("Service %s connected", sid)
+	return nil
+}
+
+func (this ServiceManager) Close() error {
+	log.Println("Service Close")
+	return nil
 }
