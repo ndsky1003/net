@@ -1,10 +1,16 @@
 package client
 
-import "time"
+import (
+	"time"
+
+	"github.com/ndsky1003/net/conn"
+)
 
 type Option struct {
-	ReconnectInterval *time.Duration
 	Secret            *string
+	ReconnectInterval *time.Duration
+	Handler
+	conn.Option
 }
 
 func Options() *Option {
@@ -21,6 +27,17 @@ func (this *Option) SetSecret(s string) *Option {
 	return this
 }
 
+// SetHandler的一个包装，类似http的HandlerFunc
+func (this *Option) SetHandlerFunc(f func([]byte) error) *Option {
+	this.Handler = HandlerFunc(f)
+	return this
+}
+
+func (this *Option) SetHandler(f Handler) *Option {
+	this.Handler = f
+	return this
+}
+
 func (this *Option) merge(delta *Option) *Option {
 	if this == nil || delta == nil {
 		return nil
@@ -33,6 +50,12 @@ func (this *Option) merge(delta *Option) *Option {
 	if delta.Secret != nil {
 		this.Secret = delta.Secret
 	}
+
+	if delta.Handler != nil {
+		this.Handler = delta.Handler
+	}
+
+	this.Option.Merge(&delta.Option)
 
 	return this
 }
