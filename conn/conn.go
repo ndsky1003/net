@@ -67,30 +67,23 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	var size [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(size[:], uint64(length)+1)
 	if err = this.Conn.SetWriteDeadline(time.Now().Add(*opt.WriteDeadline)); err != nil {
-		err = fmt.Errorf("err1:%w", err)
 		return
 	}
 	if _, err = this.w.Write(size[:n]); err != nil {
-		err = fmt.Errorf("err2:%w", err)
 		return
 	}
 
 	if err = this.w.WriteByte(flag); err != nil {
-		err = fmt.Errorf("err3:%w", err)
 		return
 	}
 
 	if _, err = this.w.Write(data); err != nil {
-		err = fmt.Errorf("err4:%w", err)
 		return
 	}
-	if err = this.w.Flush(); err != nil {
-		err = fmt.Errorf("err5:%w", err)
-		return
-	}
-	return
+	return this.w.Flush()
 }
 
+// WARNING: 非线程安全
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
 	max_frame_size := *opt.MaxFrameSize
@@ -122,9 +115,19 @@ func (this *Conn) ping() error {
 	}
 	return nil
 }
+
+// NOTE: 这里只能往队列里面放，如果直接写会有多线程问题，read和write是2个不同的goroutine，会引发var ErrShortWrite = errors.New("short write")
 func (this *Conn) pong() error {
-	if err := this.write(flag_pong, []byte{}); err != nil {
-		return fmt.Errorf("pong:%w", err)
+	// if err := this.write(flag_pong, []byte{}); err != nil {
+	// 	return fmt.Errorf("pong:%w", err)
+	// }
+	select {
+	case this.sendChan <- &msg{ //如果 Close() 先执行：sendChan 被关闭，select 会检测到通道关闭并panic
+		flag: flag_pong,
+		data: nil,
+	}:
+	default:
+		return fmt.Errorf("send pong buffer full")
 	}
 	return nil
 }
@@ -204,12 +207,12 @@ func (this *Conn) readPump() error {
 				if this.closed.Load() {
 					return fmt.Errorf("connection closed")
 				}
-				// log.Println("receive ping msg")
+				log.Println("receive ping msg")
 				if err := this.pong(); err != nil {
 					return err
 				}
 			case flag_pong:
-				// log.Println("receive pong msg")
+				log.Println("receive pong msg")
 				// 正常处理，时间已更新
 			default:
 				return fmt.Errorf("unknown flag: %d", flag)

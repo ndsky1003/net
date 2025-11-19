@@ -2,18 +2,20 @@ package conn
 
 import (
 	"fmt"
-	"log"
 )
 
+// WARNING: 非线程安全
 func (this *Conn) Write(data []byte, opts ...*Option) (err error) {
 	return this.write(flag_msg, data, opts...)
 }
 
+// WARNING: 非线程安全
 func (this *Conn) Read(opts ...*Option) (data []byte, err error) {
 	_, data, err = this.read(opts...)
 	return
 }
 
+// NOTE: 线程安全
 func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
 	if this.closed.Load() {
 		return fmt.Errorf("connection closed")
@@ -41,15 +43,11 @@ func (this *Conn) Serve() error {
 	errCh := make(chan error, 2)
 
 	go func() {
-		err := this.writePump()
-		log.Println("writePump:", err)
-		errCh <- err
+		errCh <- this.writePump()
 	}()
 
 	go func() {
-		err := this.readPump()
-		log.Println("readPump:", err)
-		errCh <- err
+		errCh <- this.readPump()
 	}()
 
 	// 返回第一个错误

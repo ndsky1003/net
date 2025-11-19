@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -77,7 +78,26 @@ func (this *handler_helper) HandleMsg(data []byte) error {
 	return this.mgr.OnMessage(this.sid, data)
 }
 
+// 定义认证常量
+const (
+	auth_success_byte = 0x0C
+	auth_fail_byte    = 0x00
+)
+
 func (this *server) HandleConn(sid string, conn *conn.Conn) (err error) {
+	if this.opt.Secret != nil || *this.opt.Secret != "" {
+		if data, err := conn.Read(); err != nil {
+			return err
+		} else if string(data) != *this.opt.Secret {
+			if err := conn.Write([]byte{auth_fail_byte}); err != nil {
+				return err
+			}
+			return errors.New("authentication failed")
+		}
+		if err = conn.Write([]byte{auth_success_byte}); err != nil {
+			return
+		}
+	}
 	err = this.mgr.OnConnect(sid, conn)
 	if err != nil {
 		conn.Close()

@@ -29,7 +29,7 @@ func (this *Option) SetSecret(s string) *Option {
 
 // SetHandler的一个包装，类似http的HandlerFunc
 func (this *Option) SetHandlerFunc(f func([]byte) error) *Option {
-	this.Handler = HandlerFunc(f)
+	this.Handler = handler_func(f)
 	return this
 }
 

@@ -16,20 +16,19 @@ import (
 type Handler interface {
 	HandleMsg(data []byte) error
 }
-type HandlerFunc func([]byte) error
+type handler_func func([]byte) error
 
-func (f HandlerFunc) HandleMsg(data []byte) error {
+func (f handler_func) HandleMsg(data []byte) error {
 	return f(data)
 }
 
 // 定义认证常量
 const (
-	AuthSuccessByte = 0x0C
-	AuthFailByte    = 0x00
+	auth_success_byte = 0x0C
 )
 
 var (
-	AuthFailedError = errors.New("authentication failed")
+	auth_failed_error = errors.New("authentication failed")
 )
 
 type Client struct {
@@ -94,7 +93,7 @@ func (this *Client) getReconnectDelay(err error) time.Duration {
 // 错误类型判断函数
 func isAuthError(err error) bool {
 	return err != nil &&
-		(errors.Is(err, AuthFailedError) || err.Error() == "authentication failed" ||
+		(errors.Is(err, auth_failed_error) || err.Error() == "authentication failed" ||
 			err.Error() == "verification failed")
 }
 
@@ -118,7 +117,10 @@ func (this *Client) getConn() *conn.Conn {
 }
 
 func (this *Client) HandleMsg(data []byte) error {
-	return this.opt.Handler.HandleMsg(data)
+	if this.opt.Handler != nil {
+		return this.opt.Handler.HandleMsg(data)
+	}
+	return nil
 }
 
 func (this *Client) Send(data []byte, opts ...*Option) error {
@@ -143,8 +145,8 @@ func (this *Client) verify(conn *conn.Conn) (err error) {
 		return fmt.Errorf("read auth response failed: %w", err)
 	}
 
-	if len(res) == 0 || res[0] != AuthSuccessByte {
-		return AuthFailedError
+	if len(res) == 0 || res[0] != auth_success_byte {
+		return auth_failed_error
 	}
 
 	return nil
