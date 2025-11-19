@@ -15,7 +15,7 @@ func (this *Conn) Read(opts ...*Option) (data []byte, err error) {
 	return
 }
 
-// NOTE: 线程安全
+// WARNING: 线程安全
 func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
 	if this.closed.Load() {
 		return fmt.Errorf("connection closed")
