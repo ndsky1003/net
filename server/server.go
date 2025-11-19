@@ -20,6 +20,7 @@ type server struct {
 func NewServer(mgr IServiceManager, opts ...*Option) *server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &server{
+		mgr:    mgr,
 		opt:    Options().Merge(opts...),
 		ctx:    ctx,
 		cancel: cancel,

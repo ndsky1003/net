@@ -31,12 +31,12 @@ func (this ServiceManager) OnConnect(sid string, conn *conn.Conn) error {
 }
 
 func (this ServiceManager) OnDisconnect(sid string, err error) error {
-	log.Printf("Service %s connected", sid)
+	log.Printf("Service %s disconnected", sid)
 	return nil
 }
 
 func (this ServiceManager) OnMessage(sid string, data []byte) error {
-	log.Printf("Service %s connected", sid)
+	log.Printf("Service %s OnMessage", sid)
 	return nil
 }
 

@@ -1,6 +1,9 @@
 package conn
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 func (this *Conn) Write(data []byte, opts ...*Option) (err error) {
 	return this.write(flag_msg, data, opts...)
@@ -38,11 +41,15 @@ func (this *Conn) Serve() error {
 	errCh := make(chan error, 2)
 
 	go func() {
-		errCh <- this.writePump()
+		err := this.writePump()
+		log.Println("writePump:", err)
+		errCh <- err
 	}()
 
 	go func() {
-		errCh <- this.readPump()
+		err := this.readPump()
+		log.Println("readPump:", err)
+		errCh <- err
 	}()
 
 	// 返回第一个错误

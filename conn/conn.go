@@ -67,17 +67,21 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	var size [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(size[:], uint64(length)+1)
 	if err = this.Conn.SetWriteDeadline(time.Now().Add(*opt.WriteDeadline)); err != nil {
+		err = fmt.Errorf("err1:%w", err)
 		return
 	}
 	if _, err = this.w.Write(size[:n]); err != nil {
+		err = fmt.Errorf("err2:%w", err)
 		return
 	}
 
 	if err = this.w.WriteByte(flag); err != nil {
+		err = fmt.Errorf("err3:%w", err)
 		return
 	}
 
 	if _, err = this.w.Write(data); err != nil {
+		err = fmt.Errorf("err4:%w", err)
 		return
 	}
 	return this.w.Flush()
@@ -122,8 +126,9 @@ func (this *Conn) pong() error {
 }
 
 func (this *Conn) writePump() (err error) {
-	atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
-	ticker := time.NewTicker(*this.opt.HeartInterval)
+	// atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
+	heart_interval := *this.opt.HeartInterval
+	ticker := time.NewTicker(heart_interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -148,13 +153,21 @@ func (this *Conn) writePump() (err error) {
 			if usage > 0.8 {
 				log.Printf("send buffer usage: %.1f%%, consider increasing size", usage*100)
 			}
+			//模拟一个ping/pong响应的是100毫秒
+			if atomic.CompareAndSwapInt64(&this.pong_time, 0, time.Now().Add(100*time.Millisecond).UnixNano()) {
+				continue
+			}
 			lastPongNano := atomic.LoadInt64(&this.pong_time)
 			currentNano := time.Now().UnixNano()
-			if (currentNano - lastPongNano) > int64(*this.opt.HeartInterval) {
+			delta := currentNano - lastPongNano
+			if delta > int64(2*heart_interval) {
+				log.Println("delta:", delta)
 				return fmt.Errorf("pong timeout")
 			}
-			if err = this.ping(); err != nil {
-				return
+			if delta > int64(heart_interval) {
+				if err = this.ping(); err != nil {
+					return
+				}
 			}
 		}
 	}
@@ -171,7 +184,7 @@ func (this *Conn) readPump() error {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					continue
 				}
-				return err
+				return fmt.Errorf("1:%w", err)
 			}
 			atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
 			switch flag {
@@ -190,10 +203,12 @@ func (this *Conn) readPump() error {
 				if this.closed.Load() {
 					return fmt.Errorf("connection closed")
 				}
+				log.Println("receive ping msg")
 				if err := this.pong(); err != nil {
 					return err
 				}
 			case flag_pong:
+				// log.Println("receive pong msg")
 				// 正常处理，时间已更新
 			default:
 				return fmt.Errorf("unknown flag: %d", flag)
