@@ -11,13 +11,13 @@ import (
 
 type server struct {
 	idCounter atomic.Int64
-	mgr       IServiceManager
+	mgr       ServiceManager
 	opt       *Option
 	ctx       context.Context
 	cancel    context.CancelFunc
 }
 
-func NewServer(mgr IServiceManager, opts ...*Option) *server {
+func New(mgr ServiceManager, opts ...*Option) *server {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &server{
 		mgr:    mgr,

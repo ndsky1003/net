@@ -84,7 +84,11 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 		err = fmt.Errorf("err4:%w", err)
 		return
 	}
-	return this.w.Flush()
+	if err = this.w.Flush(); err != nil {
+		err = fmt.Errorf("err5:%w", err)
+		return
+	}
+	return
 }
 
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
@@ -113,22 +117,23 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 }
 
 func (this *Conn) ping() error {
-	if err := this.write(flag_ping, nil); err != nil {
+	if err := this.write(flag_ping, []byte{}); err != nil {
 		return fmt.Errorf("ping:%w", err)
 	}
 	return nil
 }
 func (this *Conn) pong() error {
-	if err := this.write(flag_pong, nil); err != nil {
+	if err := this.write(flag_pong, []byte{}); err != nil {
 		return fmt.Errorf("pong:%w", err)
 	}
 	return nil
 }
 
 func (this *Conn) writePump() (err error) {
-	// atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
 	heart_interval := *this.opt.HeartInterval
 	ticker := time.NewTicker(heart_interval)
+	//模拟一个ping/pong响应的是100毫秒
+	atomic.CompareAndSwapInt64(&this.pong_time, 0, time.Now().Add(100*time.Millisecond).UnixNano())
 	defer ticker.Stop()
 	for {
 		select {
@@ -153,18 +158,14 @@ func (this *Conn) writePump() (err error) {
 			if usage > 0.8 {
 				log.Printf("send buffer usage: %.1f%%, consider increasing size", usage*100)
 			}
-			//模拟一个ping/pong响应的是100毫秒
-			if atomic.CompareAndSwapInt64(&this.pong_time, 0, time.Now().Add(100*time.Millisecond).UnixNano()) {
-				continue
-			}
 			lastPongNano := atomic.LoadInt64(&this.pong_time)
 			currentNano := time.Now().UnixNano()
 			delta := currentNano - lastPongNano
-			if delta > int64(2*heart_interval) {
-				log.Println("delta:", delta)
-				return fmt.Errorf("pong timeout")
+			if float64(delta)-float64(heart_interval) > float64(500*time.Millisecond) {
+				return fmt.Errorf("pong timeout:%v,%v,%v", delta, heart_interval, delta-int64(heart_interval))
 			}
-			if delta > int64(heart_interval) {
+			// log.Println("delta:", delta, "heart_interval3/4:", float64(heart_interval)*3/4)
+			if float64(delta) > float64(heart_interval)*3/4 {
 				if err = this.ping(); err != nil {
 					return
 				}
@@ -203,7 +204,7 @@ func (this *Conn) readPump() error {
 				if this.closed.Load() {
 					return fmt.Errorf("connection closed")
 				}
-				log.Println("receive ping msg")
+				// log.Println("receive ping msg")
 				if err := this.pong(); err != nil {
 					return err
 				}

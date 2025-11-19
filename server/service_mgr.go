@@ -6,8 +6,8 @@ import (
 	"github.com/ndsky1003/net/conn"
 )
 
-// IServiceManager 服务管理策略接口
-type IServiceManager interface {
+// ServiceManager 服务管理策略接口
+type ServiceManager interface {
 
 	// OnConnect 当新服务连接时调用
 	OnConnect(sid string, conn *conn.Conn) error
@@ -22,25 +22,25 @@ type IServiceManager interface {
 	Close() error
 }
 
-type ServiceManager struct {
+type DefaultServiceManager struct {
 }
 
-func (this ServiceManager) OnConnect(sid string, conn *conn.Conn) error {
+func (this DefaultServiceManager) OnConnect(sid string, conn *conn.Conn) error {
 	log.Printf("Service %s connected", sid)
 	return nil
 }
 
-func (this ServiceManager) OnDisconnect(sid string, err error) error {
+func (this DefaultServiceManager) OnDisconnect(sid string, err error) error {
 	log.Printf("Service %s disconnected", sid)
 	return nil
 }
 
-func (this ServiceManager) OnMessage(sid string, data []byte) error {
+func (this DefaultServiceManager) OnMessage(sid string, data []byte) error {
 	log.Printf("Service %s OnMessage", sid)
 	return nil
 }
 
-func (this ServiceManager) Close() error {
+func (this DefaultServiceManager) Close() error {
 	log.Println("Service Close")
 	return nil
 }
