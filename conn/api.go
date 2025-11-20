@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"context"
 	"fmt"
 )
 
@@ -23,17 +24,35 @@ func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
 
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("connection closed")
+			err = fmt.Errorf("connection closed:%w", err)
 		}
 	}()
-	select {
-	case this.sendChan <- &msg{ //如果 Close() 先执行：sendChan 被关闭，select 会检测到通道关闭并panic
+	opt := Options().Merge(this.opt).Merge(opts...)
+	msg := &msg{ //如果 Close() 先执行：sendChan 被关闭，select 会检测到通道关闭并panic
 		flag: flag_msg,
 		data: data,
-		opt:  Options().Merge(this.opt).Merge(opts...),
-	}:
-	default:
-		return fmt.Errorf("send buffer full")
+		opt:  opt,
+	}
+
+	if timeout := opt.SendChanTimeout; timeout != nil {
+		ctx, cancle := context.WithTimeout(context.Background(), *timeout)
+		defer cancle()
+		select {
+		case this.sendChan <- msg:
+		case <-ctx.Done():
+			if ctx.Err() == context.DeadlineExceeded {
+				return fmt.Errorf("send timeout")
+			}
+			return fmt.Errorf("send cancelled")
+		case <-this.done:
+			return fmt.Errorf("connection closed")
+		}
+	} else {
+		select {
+		case this.sendChan <- msg:
+		case <-this.done:
+			return fmt.Errorf("connection closed")
+		}
 	}
 	return nil
 }
@@ -59,10 +78,17 @@ func (this *Conn) Close() error {
 		return nil
 	}
 	close(this.done)
+	close(this.sendChan)
+	if f := this.opt.OnCloseCallbackDiscardMsg; f != nil {
+		var discardedMsgs [][]byte
+		for msg := range this.sendChan {
+			discardedMsgs = append(discardedMsgs, msg.data)
+		}
+		f(discardedMsgs)
+	}
 	if err := this.Conn.Close(); err != nil {
 		return err
 	}
-	close(this.sendChan)
 	// this.done = nil
 	// this.sendChan = nil // 设置为nil有可能造成panic，读写都会
 	return nil

@@ -6,8 +6,8 @@ import (
 	"github.com/ndsky1003/net/conn"
 )
 
-// ServiceManager 服务管理策略接口
-type ServiceManager interface {
+// service_manager 服务管理策略接口
+type service_manager interface {
 
 	// OnConnect 当新服务连接时调用
 	OnConnect(sid string, conn *conn.Conn) error

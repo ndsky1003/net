@@ -13,15 +13,6 @@ import (
 	"github.com/samber/lo"
 )
 
-type Handler interface {
-	HandleMsg(data []byte) error
-}
-type handler_func func([]byte) error
-
-func (f handler_func) HandleMsg(data []byte) error {
-	return f(data)
-}
-
 // 定义认证常量
 const (
 	auth_success_byte = 0x0C
@@ -64,7 +55,7 @@ func (this *Client) keepAlive() {
 			time.Sleep(*this.opt.ReconnectInterval)
 			continue
 		}
-		conn := conn.New(conn_raw, this, &this.opt.Option)
+		conn := conn.New(conn_raw, this.opt.GetHandler(), &this.opt.Option)
 
 		err = this.serve(conn)
 		if err != nil {
@@ -114,13 +105,6 @@ func (this *Client) setConn(newConn *conn.Conn) {
 
 func (this *Client) getConn() *conn.Conn {
 	return this.conn.Load()
-}
-
-func (this *Client) HandleMsg(data []byte) error {
-	if this.opt.Handler != nil {
-		return this.opt.Handler.HandleMsg(data)
-	}
-	return nil
 }
 
 func (this *Client) Send(data []byte, opts ...*Option) error {
