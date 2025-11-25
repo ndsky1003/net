@@ -29,12 +29,13 @@ type msg struct {
 
 type Conn struct {
 	net.Conn
-	r         io.Reader
-	w         *bufio.Writer
-	sendChan  chan *msg
-	pong_time int64
-	handler   Handler
-	opt       *Option
+	r              io.Reader
+	w              *bufio.Writer
+	sendChan       chan *msg
+	last_msg_nano  int64 //最新业务消息时间
+	last_pong_nano int64 //最新心跳消息时间
+	handler        Handler
+	opt            *Option
 
 	closed atomic.Bool // 原子状态标记
 	done   chan struct{}
@@ -57,6 +58,9 @@ func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 		sendChan: make(chan *msg, *opt.SendChanSize),
 	}
 	c.closed.Store(false)
+	now := time.Now().UnixNano()
+	atomic.StoreInt64(&c.last_msg_nano, now)
+	atomic.StoreInt64(&c.last_pong_nano, now)
 	return c
 }
 
@@ -134,9 +138,7 @@ func (this *Conn) pong() error {
 
 func (this *Conn) writePump() (err error) {
 	heart_interval := *this.opt.HeartInterval
-	ticker := time.NewTicker(heart_interval)
-	//模拟一个ping/pong响应的是100毫秒
-	atomic.CompareAndSwapInt64(&this.pong_time, 0, time.Now().Add(100*time.Millisecond).UnixNano())
+	ticker := time.NewTicker(heart_interval / 2) //探测周期缩短一半
 	defer ticker.Stop()
 	for {
 		select {
@@ -161,14 +163,18 @@ func (this *Conn) writePump() (err error) {
 			if usage > 0.8 {
 				log.Printf("send buffer usage: %.1f%%, consider increasing size", usage*100)
 			}
-			lastPongNano := atomic.LoadInt64(&this.pong_time)
-			currentNano := time.Now().UnixNano()
-			delta := currentNano - lastPongNano
-			if float64(delta)-float64(heart_interval) > float64(500*time.Millisecond) {
-				return fmt.Errorf("pong timeout:%v,%v,%v", delta, heart_interval, delta-int64(heart_interval))
+			now := time.Now().UnixNano()
+			heartIntervalNano := int64(heart_interval)
+			// 1. 超时检查：检查距离上次 PONG 有多久
+			lastPong := atomic.LoadInt64(&this.last_pong_nano)
+			// 增加一个500ms的宽限期
+			if now-lastPong > heartIntervalNano+int64(500*time.Millisecond) {
+				return fmt.Errorf("pong timeout, last pong: %v ago", time.Duration(now-lastPong))
 			}
-			// log.Println("delta:", delta, "heart_interval3/4:", float64(heart_interval)*3/4)
-			if float64(delta) > float64(heart_interval)*3/4 {
+
+			// 2. 发送 PING 检查：检查距离上次业务消息有多久
+			lastMsg := atomic.LoadInt64(&this.last_msg_nano)
+			if now-lastMsg > heartIntervalNano {
 				if err = this.ping(); err != nil {
 					return
 				}
@@ -190,17 +196,21 @@ func (this *Conn) readPump() error {
 				}
 				return fmt.Errorf("1:%w", err)
 			}
-			atomic.StoreInt64(&this.pong_time, time.Now().UnixNano())
 			switch flag {
 			case flag_msg:
+				now := time.Now().UnixNano()
+				atomic.StoreInt64(&this.last_msg_nano, now)
+				atomic.StoreInt64(&this.last_pong_nano, now) // 关键修正：业务消息也代表连接存活
 				if this.handler != nil {
-					go func() {
+					func() {
 						defer func() {
 							if r := recover(); r != nil {
 								log.Printf("handler panic: %v", r)
 							}
 						}()
-						this.handler.HandleMsg(body)
+						if err := this.handler.HandleMsg(body); err != nil {
+							log.Printf("handle msg error: %v", err)
+						}
 					}()
 				}
 			case flag_ping:
@@ -212,6 +222,7 @@ func (this *Conn) readPump() error {
 					return err
 				}
 			case flag_pong:
+				atomic.StoreInt64(&this.last_pong_nano, time.Now().UnixNano())
 				log.Println("receive pong msg")
 				// 正常处理，时间已更新
 			default:

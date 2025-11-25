@@ -85,7 +85,9 @@ func (this *Conn) Close() error {
 			discardedMsgs = append(discardedMsgs, msg.data)
 		}
 		f(discardedMsgs)
+		this.opt.SetOnCloseCallbackDiscardMsg(nil) //把回调释放掉，其他conn还会引用的
 	}
+
 	if err := this.Conn.Close(); err != nil {
 		return err
 	}

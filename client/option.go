@@ -11,10 +11,28 @@ type Option struct {
 	ReconnectInterval *time.Duration
 	conn.Handler
 	conn.Option
+	OnConnected    func()
+	OnDisconnected func(err error)
+	OnAuthFailed   func(err error)
 }
 
 func Options() *Option {
 	return &Option{}
+}
+
+func (this *Option) SetOnConnected(f func()) *Option {
+	this.OnConnected = f
+	return this
+}
+
+func (this *Option) SetOnDisconnected(f func(err error)) *Option {
+	this.OnDisconnected = f
+	return this
+}
+
+func (this *Option) SetOnAuthFailed(f func(err error)) *Option {
+	this.OnAuthFailed = f
+	return this
 }
 
 func (this *Option) SetReconnectInterval(t time.Duration) *Option {
@@ -53,6 +71,18 @@ func (this *Option) merge(delta *Option) *Option {
 
 	if delta.Handler != nil {
 		this.Handler = delta.Handler
+	}
+
+	if delta.OnConnected != nil {
+		this.OnConnected = delta.OnConnected
+	}
+
+	if delta.OnDisconnected != nil {
+		this.OnDisconnected = delta.OnDisconnected
+	}
+
+	if delta.OnAuthFailed != nil {
+		this.OnAuthFailed = delta.OnAuthFailed
 	}
 
 	this.Option.Merge(&delta.Option)

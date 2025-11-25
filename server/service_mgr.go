@@ -18,7 +18,9 @@ type service_manager interface {
 	// OnMessage 当收到服务消息时调用
 	OnMessage(sid string, data []byte) error
 
-	//清理资源
+	// Close 清理所有资源。
+	// 重要：该方法的实现者必须负责关闭所有由 OnConnect 管理的 conn.Conn 连接，
+	// 以确保服务器可以优雅地关闭。
 	Close() error
 }
 

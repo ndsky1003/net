@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,6 +29,8 @@ type Client struct {
 	url     string
 	opt     *Option
 	conn    atomic.Pointer[conn.Conn]
+	closeCh chan struct{}
+	closeWg sync.WaitGroup
 }
 
 func Dial(name, url string, opts ...*Option) (c *Client, err error) {
@@ -42,27 +45,47 @@ func Dial(name, url string, opts ...*Option) (c *Client, err error) {
 		name:    name,
 		url:     url,
 		opt:     Options().SetReconnectInterval(2 * time.Second).Merge(opts...),
+		closeCh: make(chan struct{}),
 	}
+	c.closeWg.Add(1)
 	go c.keepAlive()
 	return
 }
 
 func (this *Client) keepAlive() {
+	defer this.closeWg.Done()
 	for {
+		select {
+		case <-this.closeCh:
+			return
+		default:
+		}
+
 		conn_raw, err := net.Dial("tcp", this.url)
 		if err != nil {
 			log.Println("err:", err)
-			time.Sleep(*this.opt.ReconnectInterval)
+			select {
+			case <-time.After(*this.opt.ReconnectInterval):
+			case <-this.closeCh:
+				return
+			}
 			continue
 		}
 		conn := conn.New(conn_raw, this.opt.GetHandler(), &this.opt.Option)
 
 		err = this.serve(conn)
+		if this.opt.OnDisconnected != nil {
+			this.opt.OnDisconnected(err)
+		}
 		if err != nil {
 			log.Println("server:", err)
 		}
 		delay := this.getReconnectDelay(err)
-		time.Sleep(delay) //防止连上就断开，再继续连接
+		select {
+		case <-time.After(delay): //防止连上就断开，再继续连接
+		case <-this.closeCh:
+			return
+		}
 	}
 }
 
@@ -138,18 +161,33 @@ func (this *Client) verify(conn *conn.Conn) (err error) {
 
 func (this *Client) serve(conn *conn.Conn) (err error) {
 	if err = this.verify(conn); err != nil {
+		if this.opt.OnAuthFailed != nil {
+			this.opt.OnAuthFailed(err)
+		}
 		conn.Close()
 		return
 	}
 	this.setConn(conn)
+	if this.opt.OnConnected != nil {
+		this.opt.OnConnected()
+	}
 	return conn.Serve()
 }
 
 func (this *Client) Close() error {
+	select {
+	case <-this.closeCh:
+		// already closed
+		return nil
+	default:
+		close(this.closeCh)
+	}
+
 	conn := this.conn.Load()
 	if conn != nil {
-		return conn.Close()
+		conn.Close()
 	}
+	this.closeWg.Wait()
 	return nil
 }
 

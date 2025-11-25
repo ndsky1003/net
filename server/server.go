@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ndsky1003/net/conn"
@@ -16,6 +18,7 @@ type server struct {
 	opt       *Option
 	ctx       context.Context
 	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 }
 
 func New(mgr service_manager, opts ...*Option) *server {
@@ -89,6 +92,7 @@ func (this *server) acceptListener(listener net.Listener) error {
 			server: this,
 		}
 		conn := conn.New(connRaw, helper, &this.opt.Option)
+		this.wg.Add(1)
 		go this.handleConn(sid, conn)
 	}
 }
@@ -113,12 +117,13 @@ const (
 )
 
 func (this *server) handleConn(sid string, conn *conn.Conn) (err error) {
+	defer this.wg.Done()
 	if this.opt.Secret != nil && *this.opt.Secret != "" {
 		if data, err := conn.Read(); err != nil {
 			return err
 		} else if string(data) != *this.opt.Secret {
-			if err := conn.Write([]byte{auth_fail_byte}); err != nil {
-				return err
+			if writeErr := conn.Write([]byte{auth_fail_byte}); writeErr != nil {
+				log.Printf("failed to notify client of auth failure, sid: %s, err: %v", sid, writeErr)
 			}
 			return errors.New("authentication failed")
 		}
@@ -141,5 +146,7 @@ func (this *server) handleConn(sid string, conn *conn.Conn) (err error) {
 
 func (this *server) Close() error {
 	this.cancel()
-	return this.mgr.Close()
+	err := this.mgr.Close()
+	this.wg.Wait()
+	return err
 }
