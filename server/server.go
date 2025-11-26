@@ -8,6 +8,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/ndsky1003/net/conn"
 )
@@ -116,27 +117,27 @@ const (
 	auth_fail_byte    = 0x00
 )
 
-func (this *server) handleConn(sid string, conn *conn.Conn) (err error) {
+func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 	defer this.wg.Done()
 	if this.opt.Secret != nil && *this.opt.Secret != "" {
-		if data, err := conn.Read(); err != nil {
-			return err
-		} else if string(data) != *this.opt.Secret {
-			if writeErr := conn.Write([]byte{auth_fail_byte}); writeErr != nil {
+		if res, err := c.Read(conn.Options().SetReadDeadline(5 * time.Second)); err != nil {
+			return fmt.Errorf("read auth failed: %w", err)
+		} else if string(res) != *this.opt.Secret {
+			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {
 				log.Printf("failed to notify client of auth failure, sid: %s, err: %v", sid, writeErr)
 			}
 			return errors.New("authentication failed")
 		}
-		if err = conn.Write([]byte{auth_success_byte}); err != nil {
+		if err = c.Write([]byte{auth_success_byte}); err != nil {
 			return
 		}
 	}
-	err = this.mgr.OnConnect(sid, conn)
+	err = this.mgr.OnConnect(sid, c)
 	if err != nil {
-		conn.Close()
+		c.Close()
 		return
 	}
-	err = conn.Serve()
+	err = c.Serve()
 	disconnectErr := this.mgr.OnDisconnect(sid, err)
 	if err == nil {
 		err = disconnectErr

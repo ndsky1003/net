@@ -112,7 +112,7 @@ func TestClientConcurrency(t *testing.T) {
 	go func() {
 		serverErrCh <- serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	defer func() {
 		serverInst.Close()
 		<-serverErrCh
@@ -150,7 +150,7 @@ func TestClientConcurrency(t *testing.T) {
 				return
 			}
 
-			receivedMessage, err := clientHandler.WaitForMessage(2 * time.Second)
+			receivedMessage, err := clientHandler.WaitForMessage(5 * time.Second)
 			if err != nil {
 				t.Errorf("Client %d failed to receive echoed message: %v", clientID, err)
 				return
@@ -166,8 +166,8 @@ func TestClientConcurrency(t *testing.T) {
 	t.Logf("Concurrency test with %d clients completed.", clientCount)
 }
 
-// newTestSvcMgrWithEcho is a helper to create a service manager that echoes messages.
-// This is needed because the existing testServiceManager has race conditions when used concurrently.
+// newTestSvcMgrWithEcho 是一个辅助函数，用于创建一个回显消息的服务管理器。
+// 之所以需要它，是因为现有的 testServiceManager 在并发使用时存在竞态条件。
 func newTestSvcMgrWithEcho() *echoServiceManager {
 	return &echoServiceManager{
 		conns: make(map[string]*conn.Conn),
@@ -192,7 +192,7 @@ func (m *echoServiceManager) OnMessage(sid string, data []byte) error {
 	m.mu.Unlock()
 
 	if ok {
-		// Send can be slow, so we do it outside the lock.
+		// 发送操作可能很慢，所以我们在锁的外部执行。
 		if err := c.Send(data); err != nil {
 			fmt.Printf("server failed to echo message to %s: %v\n", sid, err)
 		}

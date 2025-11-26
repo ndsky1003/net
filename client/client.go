@@ -60,8 +60,7 @@ func (this *Client) keepAlive() {
 			return
 		default:
 		}
-
-		conn_raw, err := net.Dial("tcp", this.url)
+		conn_raw, err := net.DialTimeout("tcp", this.url, 5*time.Second)
 		if err != nil {
 			log.Println("err:", err)
 			select {

@@ -38,9 +38,10 @@ type Conn struct {
 	handler        Handler
 	opt            *Option
 
-	closed   atomic.Bool // 原子状态标记
-	done     chan struct{}
-	closeMu  sync.Mutex
+	closed atomic.Bool // 原子状态标记
+	done   chan struct{}
+
+	l        sync.Mutex //protect under
 	closeErr error
 }
 
@@ -142,6 +143,14 @@ func (this *Conn) pong() error {
 	return nil
 }
 
+// 【可】conn 包中的心跳逻辑可以简化
+//   - 问题: conn/conn.go 的 writePump 中的心跳逻辑使用了 time.AfterFunc。这会创建一个独立的 goroutine 来执行一个函数，如果管理不当，在连接频繁启停时可能会有微小的资源泄漏风险。
+//   - 位置: conn/conn.go -> writePump
+//   - 修改建议: 可以简化心跳逻辑，完全依赖 writePump 中已有的 ticker。
+//   - ticker 每隔 heart_interval / 2 触发一次。
+//   - 在 ticker 的 case 中，检查 time.Now().UnixNano() - this.last_pong_nano.Load() 是否大于 heart_interval。如果大于，说明心跳超时，直接返回错误关闭连接。
+//   - 同时检查 time.Now().UnixNano() - this.last_msg_nano.Load() 是否大于 heart_interval / 2。如果大于，就发送一次 ping。
+//   - 这样可以把所有心跳相关的逻辑都收敛到一个 ticker 事件中，更清晰且资源可控。
 func (this *Conn) writePump() (err error) {
 	heart_interval := *this.opt.HeartInterval
 	ticker := time.NewTicker(heart_interval / 2) //探测周期缩短一半,提高探测精度
@@ -205,8 +214,6 @@ func (this *Conn) writePump() (err error) {
 }
 
 func (this *Conn) readPump() error {
-	// readDeadline := *this.opt.HeartInterval*2 + 5*time.Second
-	// opt := Options().SetReadDeadline(readDeadline)
 	for {
 		select {
 		case <-this.done:
@@ -214,9 +221,6 @@ func (this *Conn) readPump() error {
 		default:
 			flag, body, err := this.read()
 			if err != nil {
-				// if netErr, ok := err.(net.Error); ok && netErr.Timeout() { //把探测死链接移动到 writePump 里处理
-				// 	continue
-				// }
 				return fmt.Errorf("1:%w", err)
 			}
 			switch flag {
