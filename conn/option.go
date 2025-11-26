@@ -38,11 +38,6 @@ func (this *Option) SetSendChanTimeout(t time.Duration) *Option {
 	return this
 }
 
-func (this *Option) SetDeadline(t time.Duration) *Option {
-	this.SetReadDeadline(t).SetWriteDeadline(t)
-	return this
-}
-
 func (this *Option) SetHeartInterval(t time.Duration) *Option {
 	this.HeartInterval = &t
 	return this

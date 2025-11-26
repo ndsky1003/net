@@ -139,15 +139,15 @@ func (this *Client) Send(data []byte, opts ...*Option) error {
 	return conn.Send(data, &opt.Option)
 }
 
-func (this *Client) verify(conn *conn.Conn) (err error) {
+func (this *Client) verify(c *conn.Conn) (err error) {
 	if this.opt.Secret == nil || *this.opt.Secret == "" {
 		return
 	}
-	if err = conn.Write([]byte(*this.opt.Secret)); err != nil {
+	if err = c.Write([]byte(*this.opt.Secret)); err != nil {
 		return
 	}
 
-	res, err := conn.Read()
+	res, err := c.Read(conn.Options().SetReadDeadline(5 * time.Second))
 	if err != nil {
 		return fmt.Errorf("read auth response failed: %w", err)
 	}

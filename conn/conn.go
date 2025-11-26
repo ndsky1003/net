@@ -9,8 +9,6 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
-
-	"github.com/samber/lo"
 )
 
 const (
@@ -45,7 +43,7 @@ type Conn struct {
 
 func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 	opt := Options().
-		SetDeadline(10 * time.Second).
+		SetWriteDeadline(10 * time.Second).
 		SetHeartInterval(30 * time.Second).
 		SetSendChanSize(100).
 		SetMaxFrameSize(64 * 1024).
@@ -89,11 +87,17 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	return this.w.Flush()
 }
 
+// - 采纳方案一：修正 readPump 的超时处理，让它成为主要的连接健康检测者？
+// - 采納方案二：简化 readPump，让 writePump 成为唯一的连接健康检测者？
+// 采用了方案二
 // WARNING: 非线程安全
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
 	max_frame_size := *opt.MaxFrameSize
-	this.Conn.SetReadDeadline(time.Now().Add(*opt.ReadDeadline))
+	if read_deadline := opt.ReadDeadline; read_deadline != nil && *read_deadline > 0 {
+		this.Conn.SetReadDeadline(time.Now().Add(*read_deadline))
+		defer this.Conn.SetReadDeadline(time.Time{}) // 恢复现场
+	}
 	size, err := binary.ReadUvarint(this.r.(io.ByteReader))
 	if err != nil {
 		return
@@ -165,27 +169,41 @@ func (this *Conn) writePump() (err error) {
 			now := time.Now().UnixNano()
 			heartIntervalNano := int64(heart_interval)
 			// 1. 超时检查：检查距离上次 PONG 有多久
-			lastPong := this.last_pong_nano.Load()
+			// lastPong := this.last_pong_nano.Load()
 			lastMsg := this.last_msg_nano.Load()
-			last_max_msg := lo.Max([]int64{lastPong, lastMsg})
+			// last_max_msg := lo.Max([]int64{lastPong, lastMsg})
 			// log.Printf("now: %v, lastPong: %v, lastMsg: %v", time.Unix(0, now).Format(time.DateTime), time.Unix(0, lastPong).Format(time.DateTime), time.Unix(0, lastMsg).Format(time.DateTime))
-			if now-last_max_msg > heartIntervalNano+int64(500*time.Millisecond) { //这个500ms是为了补偿时间片的误差
-				return fmt.Errorf("pong timeout, last pong: %v ago", time.Duration(now-lastPong))
-			}
+			// if now-last_max_msg > heartIntervalNano*2 { //这里乘以2，给对方多一点时间响应
+			// 	return fmt.Errorf("pong timeout, last pong: %v ago", time.Duration(now-lastPong))
+			// }
 
 			// 2. 发送 PING 检查：检查距离上次业务消息有多久
 			// log.Printf("delta since last msg: %v", time.Duration(now-lastMsg))
 			if now-lastMsg >= heartIntervalNano {
 				log.Printf("send ping msg:%v", time.Unix(0, now).Format(time.DateTime))
 				if err = this.ping(); err != nil {
+					this.Close()
 					return
 				}
+				time.AfterFunc(heart_interval, func() {
+					// 再次检查是否收到 pong
+					lastPong := this.last_pong_nano.Load()
+					if this.closed.Load() {
+						return
+					}
+					if time.Now().UnixNano()-lastPong > heartIntervalNano {
+						log.Printf("pong not received in time, closing connection")
+						this.Close()
+					}
+				})
 			}
 		}
 	}
 }
 
 func (this *Conn) readPump() error {
+	// readDeadline := *this.opt.HeartInterval*2 + 5*time.Second
+	// opt := Options().SetReadDeadline(readDeadline)
 	for {
 		select {
 		case <-this.done:
@@ -193,9 +211,9 @@ func (this *Conn) readPump() error {
 		default:
 			flag, body, err := this.read()
 			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue
-				}
+				// if netErr, ok := err.(net.Error); ok && netErr.Timeout() { //把探测死链接移动到 writePump 里处理
+				// 	continue
+				// }
 				return fmt.Errorf("1:%w", err)
 			}
 			switch flag {

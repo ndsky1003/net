@@ -3,6 +3,7 @@ package conn
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // WARNING: 非线程安全
@@ -88,6 +89,7 @@ func (this *Conn) Close() error {
 		this.opt.SetOnCloseCallbackDiscardMsg(nil) //把回调释放掉，其他conn还会引用的
 	}
 
+	this.Conn.SetReadDeadline(time.Now()) // 立即解除阻塞的Read操作 ，这是一个防御性编程，下面的 Close 也可以关闭
 	if err := this.Conn.Close(); err != nil {
 		return err
 	}

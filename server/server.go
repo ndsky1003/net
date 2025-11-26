@@ -146,7 +146,7 @@ func (this *server) handleConn(sid string, conn *conn.Conn) (err error) {
 
 func (this *server) Close() error {
 	this.cancel()
-	err := this.mgr.Close()
+	err := this.mgr.Close() //这里必须管道所有的conn.Close()，否则可能会出现死锁，wg无法退出
 	this.wg.Wait()
 	return err
 }
