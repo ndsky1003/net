@@ -29,15 +29,24 @@ func TestClientAuthenticationFailure(t *testing.T) {
 	}()
 
 	// 2. 创建使用错误密钥的客户端
+	authFailedCh := make(chan error, 1)
 	clientHandler := &echoHandler{}
-	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("wrongsecret")
-	_, err := client.Dial("testClient", serverAddr, clientOpts)
-
-	// 3. 验证
-	if err == nil {
-		t.Fatalf("Expected an error for authentication failure, but got nil")
+	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("wrongsecret").SetOnAuthFailed(func(err error) {
+		authFailedCh <- err
+	})
+	c, err := client.Dial("testClient", serverAddr, clientOpts)
+	if err != nil {
+		t.Fatalf("Client Dial failed initially: %v", err)
 	}
-	t.Logf("Received expected error for authentication failure: %v", err)
+	defer c.Close()
+
+	// 3. 验证认证失败
+	select {
+	case authErr := <-authFailedCh:
+		t.Logf("Received expected authentication failure: %v", authErr)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("Timed out waiting for authentication failure")
+	}
 }
 
 // TestClientStress 验证压力测试场景

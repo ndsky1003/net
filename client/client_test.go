@@ -67,7 +67,6 @@ func (m *testServiceManager) OnMessage(sid string, data []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastMessage = data
-	m.messageCh <- data
 
 	if serverConn, ok := m.serverConns[sid]; ok {
 		go func() {

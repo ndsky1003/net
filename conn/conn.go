@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -37,8 +38,10 @@ type Conn struct {
 	handler        Handler
 	opt            *Option
 
-	closed atomic.Bool // 原子状态标记
-	done   chan struct{}
+	closed   atomic.Bool // 原子状态标记
+	done     chan struct{}
+	closeMu  sync.Mutex
+	closeErr error
 }
 
 func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
@@ -89,7 +92,7 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 
 // - 采纳方案一：修正 readPump 的超时处理，让它成为主要的连接健康检测者？
 // - 采納方案二：简化 readPump，让 writePump 成为唯一的连接健康检测者？
-// 采用了方案二
+// 采用了方案二,所以读就不需要超时了
 // WARNING: 非线程安全
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
