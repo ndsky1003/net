@@ -28,6 +28,10 @@ func (this *Option) SetReadDeadline(t time.Duration) *Option {
 	return this
 }
 
+func (this *Option) SetDeadline(t time.Duration) *Option {
+	return this.SetReadDeadline(t).SetWriteDeadline(t)
+}
+
 func (this *Option) SetWriteDeadline(t time.Duration) *Option {
 	this.WriteDeadline = &t
 	return this

@@ -30,18 +30,16 @@ type msg struct {
 
 type Conn struct {
 	net.Conn
-	r              io.Reader
-	w              *bufio.Writer
-	sendChan       chan *msg
-	last_msg_nano  atomic.Int64 //最新业务消息时间
-	last_pong_nano atomic.Int64 //最新心跳消息时间
-	handler        Handler
-	opt            *Option
+	r        io.Reader
+	w        *bufio.Writer
+	sendChan chan *msg
+	handler  Handler
+	opt      *Option
 
 	closed atomic.Bool // 原子状态标记
 	done   chan struct{}
 
-	l        sync.Mutex //protect under
+	l        sync.Mutex // protect closeErr
 	closeErr error
 }
 
@@ -62,21 +60,20 @@ func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 		sendChan: make(chan *msg, *opt.SendChanSize),
 	}
 	c.closed.Store(false)
-	now := time.Now().Add(500 * time.Millisecond).UnixNano()
-	// c.last_msg_nano.Store(now)
-	c.last_pong_nano.Store(now)
 	return c
 }
 
-// WARNING: 这个函数是非线程安全的，需要外部调用者保证
+// WARNING: 非线程安全，由 writePump 独占调用
 func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
 	length := len(data)
 	var size [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(size[:], uint64(length)+1)
+
 	if err = this.Conn.SetWriteDeadline(time.Now().Add(*opt.WriteDeadline)); err != nil {
 		return
 	}
+
 	if _, err = this.w.Write(size[:n]); err != nil {
 		return
 	}
@@ -91,17 +88,15 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	return this.w.Flush()
 }
 
-// - 采纳方案一：修正 readPump 的超时处理，让它成为主要的连接健康检测者？
-// - 采納方案二：简化 readPump，让 writePump 成为唯一的连接健康检测者？
-// 采用了方案二,所以读就不需要超时了
-// WARNING: 非线程安全
+// WARNING: 非线程安全，由 readPump 独占调用
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
 	max_frame_size := *opt.MaxFrameSize
-	if read_deadline := opt.ReadDeadline; read_deadline != nil && *read_deadline > 0 {
-		this.Conn.SetReadDeadline(time.Now().Add(*read_deadline))
-		defer this.Conn.SetReadDeadline(time.Time{}) // 恢复现场
+
+	if err = this.Conn.SetReadDeadline(time.Now().Add(*opt.ReadDeadline)); err != nil {
+		return
 	}
+
 	size, err := binary.ReadUvarint(this.r.(io.ByteReader))
 	if err != nil {
 		return
@@ -114,6 +109,7 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 		err = fmt.Errorf("invalid frame size 0")
 		return
 	}
+
 	raw_data := make([]byte, size)
 	if _, err = io.ReadFull(this.r, raw_data); err != nil {
 		return
@@ -130,129 +126,110 @@ func (this *Conn) ping() error {
 	return nil
 }
 
-// NOTE: 这里只能往队列里面放，如果直接写会有多线程问题，read和write是2个不同的goroutine，会引发var ErrShortWrite = errors.New("short write")
 func (this *Conn) pong() error {
 	select {
-	case this.sendChan <- &msg{ //如果 Close() 先执行：sendChan 被关闭，select 会检测到通道关闭并panic
+	case this.sendChan <- &msg{
 		flag: flag_pong,
 		data: nil,
 	}:
 	default:
+		// 如果发送缓冲区满，丢弃 PONG 是安全的，对方会在下一个周期重试 PING
+		// 或者对方发送业务数据时也会刷新活跃状态
 		return fmt.Errorf("send pong buffer full")
 	}
 	return nil
 }
 
-// 【可】conn 包中的心跳逻辑可以简化
-//   - 问题: conn/conn.go 的 writePump 中的心跳逻辑使用了 time.AfterFunc。这会创建一个独立的 goroutine 来执行一个函数，如果管理不当，在连接频繁启停时可能会有微小的资源泄漏风险。
-//   - 位置: conn/conn.go -> writePump
-//   - 修改建议: 可以简化心跳逻辑，完全依赖 writePump 中已有的 ticker。
-//   - ticker 每隔 heart_interval / 2 触发一次。
-//   - 在 ticker 的 case 中，检查 time.Now().UnixNano() - this.last_pong_nano.Load() 是否大于 heart_interval。如果大于，说明心跳超时，直接返回错误关闭连接。
-//   - 同时检查 time.Now().UnixNano() - this.last_msg_nano.Load() 是否大于 heart_interval / 2。如果大于，就发送一次 ping。
-//   - 这样可以把所有心跳相关的逻辑都收敛到一个 ticker 事件中，更清晰且资源可控。
+// writePump 负责将 sendChan 中的数据写入连接，并维护心跳
+// 采用“智能心跳”策略：仅在连接空闲时发送 PING
 func (this *Conn) writePump() (err error) {
-	heart_interval := *this.opt.HeartInterval
-	ticker := time.NewTicker(heart_interval / 2) //探测周期缩短一半,提高探测精度
-	defer ticker.Stop()
+	heartInterval := *this.opt.HeartInterval
+	// 发送检测周期设为心跳间隔的一半，确保有足够的冗余
+	keepAliveDuration := heartInterval / 2
+
+	// 使用 Timer 实现弹性心跳
+	timer := time.NewTimer(keepAliveDuration)
+	defer timer.Stop()
+
 	for {
 		select {
 		case <-this.done:
-			return
+			return nil
+
 		case msg, ok := <-this.sendChan:
 			if !ok {
-				err = fmt.Errorf("sendChan has exhaust")
-				return
+				return fmt.Errorf("sendChan closed")
 			}
-			if this.closed.Load() { // 额外检查
-				return fmt.Errorf("connection closed ")
-			}
-			if err = this.write(msg.flag, msg.data, msg.opt); err != nil {
-				return
-			}
-		case <-ticker.C:
-			if this.closed.Load() { // 额外检查
-				return fmt.Errorf("connection closed ")
-			}
-			usage := float64(len(this.sendChan)) / float64(cap(this.sendChan))
-			if usage > 0.8 {
-				log.Printf("send buffer usage: %.1f%%, consider increasing size", usage*100)
-			}
-			now := time.Now().UnixNano()
-			heartIntervalNano := int64(heart_interval)
-			// 1. 超时检查：检查距离上次 PONG 有多久
-			// lastPong := this.last_pong_nano.Load()
-			lastMsg := this.last_msg_nano.Load()
-			// last_max_msg := lo.Max([]int64{lastPong, lastMsg})
-			// log.Printf("now: %v, lastPong: %v, lastMsg: %v", time.Unix(0, now).Format(time.DateTime), time.Unix(0, lastPong).Format(time.DateTime), time.Unix(0, lastMsg).Format(time.DateTime))
-			// if now-last_max_msg > heartIntervalNano*2 { //这里乘以2，给对方多一点时间响应
-			// 	return fmt.Errorf("pong timeout, last pong: %v ago", time.Duration(now-lastPong))
-			// }
 
-			// 2. 发送 PING 检查：检查距离上次业务消息有多久
-			// log.Printf("delta since last msg: %v", time.Duration(now-lastMsg))
-			if now-lastMsg >= heartIntervalNano {
-				log.Printf("send ping msg:%v", time.Unix(0, now).Format(time.DateTime))
-				if err = this.ping(); err != nil {
-					this.Close()
-					return
-				}
-				time.AfterFunc(heart_interval, func() {
-					// 再次检查是否收到 pong
-					lastPong := this.last_pong_nano.Load()
-					if this.closed.Load() {
-						return
-					}
-					if time.Now().UnixNano()-lastPong > heartIntervalNano {
-						log.Printf("pong not received in time, closing connection")
-						this.Close()
-					}
-				})
+			// 发送数据（业务消息或 PONG）
+			if err = this.write(msg.flag, msg.data, msg.opt); err != nil {
+				return err
 			}
+
+			// 发送成功，连接处于活跃状态，重置 PING 定时器
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(keepAliveDuration)
+
+		case <-timer.C:
+			// 定时器触发，说明 keepAliveDuration 时间内未发送任何数据
+			// 发送 PING 维持连接活跃
+			if err = this.ping(); err != nil {
+				return err
+			}
+			// 发送 PING 后重置定时器
+			timer.Reset(keepAliveDuration)
 		}
 	}
 }
 
+// readPump 负责从连接读取数据，并作为“看门狗”检测连接超时
 func (this *Conn) readPump() error {
+	heartInterval := *this.opt.HeartInterval
+	// 【修改点】优化超时策略
+	// 发送间隔是 0.5 * heartInterval。
+	// 将超时设为 1.2 * heartInterval (或者 heartInterval + 2*time.Second)。
+	// 意义：允许丢失 1 个心跳包 (0.5)，并允许第 2 个心跳包 (1.0) 晚到 20% 的时间。
+	// 这比 2.0 倍敏感得多，能更快发现断连，同时防止轻微抖动导致的误断。
+	readTimeout := time.Duration(float64(heartInterval) * 1.2)
 	for {
-		select {
-		case <-this.done:
-			return fmt.Errorf("connection closed")
-		default:
-			flag, body, err := this.read()
-			if err != nil {
-				return fmt.Errorf("1:%w", err)
-			}
-			switch flag {
-			case flag_msg:
-				this.last_msg_nano.Store(time.Now().UnixNano())
-				if this.handler != nil {
-					func() {
-						defer func() {
-							if r := recover(); r != nil {
-								log.Printf("handler panic: %v", r)
-							}
-						}()
-						if err := this.handler.HandleMsg(body); err != nil {
-							log.Printf("handle msg error: %v", err)
+		// 每次读取前设置 DeadLine，给连接“续命”
+		flag, body, err := this.read(Options().SetReadDeadline(readTimeout))
+		if err != nil {
+			// 如果超时，这里会返回 i/o timeout 错误
+			return fmt.Errorf("read error: %w", err)
+		}
+
+		// 收到任何数据，说明连接是健康的。下一次循环会重新设置 ReadDeadline。
+
+		switch flag {
+		case flag_msg:
+			if this.handler != nil {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							log.Printf("handler panic: %v", r)
 						}
 					}()
-				}
-			case flag_ping:
-				if this.closed.Load() {
-					return fmt.Errorf("connection closed")
-				}
-				log.Println("receive ping msg")
-				if err := this.pong(); err != nil {
-					return err
-				}
-			case flag_pong:
-				this.last_pong_nano.Store(time.Now().UnixNano())
-				log.Println("receive pong msg")
-				// 正常处理，时间已更新
-			default:
-				return fmt.Errorf("unknown flag: %d", flag)
+					if err := this.handler.HandleMsg(body); err != nil {
+						log.Printf("handle msg error: %v", err)
+					}
+				}()
 			}
+		case flag_ping:
+			// 收到 PING，回复 PONG
+			if err := this.pong(); err != nil {
+				return err
+			}
+		case flag_pong:
+			// 收到 PONG，仅表示对方活着，ReadDeadline 已自动刷新，无需操作
+			// log.Println("receive pong")
+		default:
+			return fmt.Errorf("unknown flag: %d", flag)
 		}
 	}
 }
