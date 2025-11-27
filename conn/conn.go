@@ -45,8 +45,9 @@ type Conn struct {
 
 func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 	opt := Options().
-		SetWriteDeadline(10 * time.Second).
-		SetHeartInterval(30 * time.Second).
+		SetDeadline(10 * time.Second).
+		SetReadTimeoutFactor(1.2).
+		SetHeartInterval(10 * time.Second).
 		SetSendChanSize(100).
 		SetMaxFrameSize(64 * 1024).
 		Merge(opts...)
@@ -195,7 +196,7 @@ func (this *Conn) readPump() error {
 	// 将超时设为 1.2 * heartInterval (或者 heartInterval + 2*time.Second)。
 	// 意义：允许丢失 1 个心跳包 (0.5)，并允许第 2 个心跳包 (1.0) 晚到 20% 的时间。
 	// 这比 2.0 倍敏感得多，能更快发现断连，同时防止轻微抖动导致的误断。
-	readTimeout := time.Duration(float64(heartInterval) * 1.2)
+	readTimeout := time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
 	for {
 		// 每次读取前设置 DeadLine，给连接“续命”
 		flag, body, err := this.read(Options().SetReadDeadline(readTimeout))

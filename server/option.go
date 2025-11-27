@@ -46,6 +46,11 @@ func (this *Option) SetReadDeadline(t time.Duration) *Option {
 	return this
 }
 
+func (this *Option) SetReadTimeoutFactor(t float64) *Option {
+	this.ReadTimeoutFactor = &t
+	return this
+}
+
 func (this *Option) SetWriteDeadline(t time.Duration) *Option {
 	this.WriteDeadline = &t
 	return this

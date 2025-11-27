@@ -5,6 +5,7 @@ import "time"
 
 type Option struct {
 	ReadDeadline              *time.Duration
+	ReadTimeoutFactor         *float64 // 读超时倍数因子，默认1.2
 	WriteDeadline             *time.Duration
 	SendChanTimeout           *time.Duration //不设置满了就会丢掉
 	HeartInterval             *time.Duration
@@ -25,6 +26,11 @@ func Options() *Option {
 
 func (this *Option) SetReadDeadline(t time.Duration) *Option {
 	this.ReadDeadline = &t
+	return this
+}
+
+func (this *Option) SetReadTimeoutFactor(t float64) *Option {
+	this.ReadTimeoutFactor = &t
 	return this
 }
 

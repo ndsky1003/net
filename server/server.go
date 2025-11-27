@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
 )
 
@@ -99,7 +100,7 @@ func (this *server) acceptListener(listener net.Listener) error {
 }
 
 func (this *server) genSessionID(index int64) string {
-	return fmt.Sprintf("service_%d", index)
+	return fmt.Sprintf("%s-%d", uuid.New().String(), index)
 }
 
 type handler_helper struct {
