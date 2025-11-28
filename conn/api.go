@@ -46,13 +46,13 @@ func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
 				return fmt.Errorf("send timeout")
 			}
 			return fmt.Errorf("send cancelled")
-		case <-this.done:
+		case <-this.ctx.Done():
 			return fmt.Errorf("connection closed")
 		}
 	} else {
 		select {
 		case this.sendChan <- msg:
-		case <-this.done:
+		case <-this.ctx.Done():
 			return fmt.Errorf("connection closed")
 		}
 	}
@@ -108,9 +108,7 @@ func (this *Conn) Close() error {
 		this.l.Unlock()
 		return err
 	}
-
-	close(this.done)
-
+	this.cancel() // 调用 cancel 替代 close(done)
 	// 2. 中断底层 net.Conn 上任何阻塞的读/写操作。
 	//    这有助于 readPump 和 writePump (如果阻塞在 Write) 快速退出。
 	this.Conn.SetReadDeadline(time.Now()) // 中断阻塞的读操作

@@ -23,8 +23,8 @@ type server struct {
 	wg        sync.WaitGroup
 }
 
-func New(mgr service_manager, opts ...*Option) *server {
-	ctx, cancel := context.WithCancel(context.Background())
+func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
+	ctx, cancel := context.WithCancel(ctx)
 	return &server{
 		mgr:    mgr,
 		opt:    Options().Merge(opts...),
@@ -93,7 +93,7 @@ func (this *server) acceptListener(listener net.Listener) error {
 			sid:    sid,
 			server: this,
 		}
-		conn := conn.New(connRaw, helper, &this.opt.Option)
+		conn := conn.New(this.ctx, connRaw, helper, &this.opt.Option)
 		this.wg.Add(1)
 		go this.handleConn(sid, conn)
 	}

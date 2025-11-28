@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -29,23 +30,26 @@ type Client struct {
 	url     string
 	opt     *Option
 	conn    atomic.Pointer[conn.Conn]
-	closeCh chan struct{}
+	cancel  context.CancelFunc
+	ctx     context.Context
 	closeWg sync.WaitGroup
 }
 
-func Dial(name, url string, opts ...*Option) (c *Client, err error) {
+func Dial(ctx context.Context, name, url string, opts ...*Option) (c *Client, err error) {
 	if name == "" {
 		return nil, errors.New("client name is empty")
 	}
 	if url == "" {
 		return nil, errors.New("client Dail url is empty")
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	c = &Client{
 		version: lo.Must(uuid.NewV7()),
 		name:    name,
 		url:     url,
 		opt:     Options().SetReconnectInterval(2 * time.Second).Merge(opts...),
-		closeCh: make(chan struct{}),
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 	c.closeWg.Add(1)
 	go c.keepAlive()
@@ -54,23 +58,30 @@ func Dial(name, url string, opts ...*Option) (c *Client, err error) {
 
 func (this *Client) keepAlive() {
 	defer this.closeWg.Done()
+	dialer := &net.Dialer{
+		Timeout: 5 * time.Second,
+	}
 	for {
 		select {
-		case <-this.closeCh:
+		case <-this.ctx.Done():
 			return
 		default:
 		}
-		conn_raw, err := net.DialTimeout("tcp", this.url, 5*time.Second)
+		conn_raw, err := dialer.DialContext(this.ctx, "tcp", this.url)
 		if err != nil {
 			log.Println("err:", err)
+			// 如果是因为 context canceled 导致的错误，直接退出
+			if errors.Is(err, context.Canceled) {
+				return
+			}
 			select {
 			case <-time.After(*this.opt.ReconnectInterval):
-			case <-this.closeCh:
+			case <-this.ctx.Done():
 				return
 			}
 			continue
 		}
-		conn := conn.New(conn_raw, this.opt.GetHandler(), &this.opt.Option)
+		conn := conn.New(this.ctx, conn_raw, this.opt.GetHandler(), &this.opt.Option)
 
 		err = this.serve(conn)
 		if this.opt.OnDisconnected != nil {
@@ -82,7 +93,7 @@ func (this *Client) keepAlive() {
 		delay := this.getReconnectDelay(err)
 		select {
 		case <-time.After(delay): //防止连上就断开，再继续连接
-		case <-this.closeCh:
+		case <-this.ctx.Done():
 			return
 		}
 	}
@@ -174,14 +185,7 @@ func (this *Client) serve(conn *conn.Conn) (err error) {
 }
 
 func (this *Client) Close() error {
-	select {
-	case <-this.closeCh:
-		// already closed
-		return nil
-	default:
-		close(this.closeCh)
-	}
-
+	this.cancel()
 	conn := this.conn.Load()
 	if conn != nil {
 		conn.Close()

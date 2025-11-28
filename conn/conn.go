@@ -2,6 +2,7 @@ package conn
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -37,27 +38,30 @@ type Conn struct {
 	opt      *Option
 
 	closed atomic.Bool // 原子状态标记
-	done   chan struct{}
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	l        sync.Mutex // protect closeErr
 	closeErr error
 }
 
-func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
+func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *Conn {
 	opt := Options().
 		SetDeadline(10 * time.Second).
 		SetReadTimeoutFactor(2.2).
-		SetHeartInterval(10 * time.Second).
+		SetHeartInterval(5 * time.Second).
 		SetSendChanSize(100).
 		SetMaxFrameSize(64 * 1024).
 		Merge(opts...)
+	ctx, cancel := context.WithCancel(ctx)
 	c := &Conn{
 		Conn:     conn,
 		r:        bufio.NewReader(conn),
 		w:        bufio.NewWriter(conn),
 		handler:  handler,
 		opt:      opt,
-		done:     make(chan struct{}),
+		ctx:      ctx,
+		cancel:   cancel,
 		sendChan: make(chan *msg, *opt.SendChanSize),
 	}
 	c.closed.Store(false)
@@ -154,9 +158,8 @@ func (this *Conn) writePump() (err error) {
 
 	for {
 		select {
-		case <-this.done:
+		case <-this.ctx.Done():
 			return nil
-
 		case msg, ok := <-this.sendChan:
 			if !ok {
 				return fmt.Errorf("sendChan closed")
