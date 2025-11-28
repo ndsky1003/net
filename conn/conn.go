@@ -46,7 +46,7 @@ type Conn struct {
 func New(conn net.Conn, handler Handler, opts ...*Option) *Conn {
 	opt := Options().
 		SetDeadline(10 * time.Second).
-		SetReadTimeoutFactor(1.2).
+		SetReadTimeoutFactor(2.2).
 		SetHeartInterval(10 * time.Second).
 		SetSendChanSize(100).
 		SetMaxFrameSize(64 * 1024).
@@ -146,10 +146,10 @@ func (this *Conn) pong() error {
 func (this *Conn) writePump() (err error) {
 	heartInterval := *this.opt.HeartInterval
 	// 发送检测周期设为心跳间隔的一半，确保有足够的冗余
-	keepAliveDuration := heartInterval / 2
+	// keepAliveDuration := heartInterval / 2
 
 	// 使用 Timer 实现弹性心跳
-	timer := time.NewTimer(keepAliveDuration)
+	timer := time.NewTimer(heartInterval)
 	defer timer.Stop()
 
 	for {
@@ -174,7 +174,7 @@ func (this *Conn) writePump() (err error) {
 				default:
 				}
 			}
-			timer.Reset(keepAliveDuration)
+			timer.Reset(heartInterval)
 
 		case <-timer.C:
 			// 定时器触发，说明 keepAliveDuration 时间内未发送任何数据
@@ -183,7 +183,7 @@ func (this *Conn) writePump() (err error) {
 				return err
 			}
 			// 发送 PING 后重置定时器
-			timer.Reset(keepAliveDuration)
+			timer.Reset(heartInterval)
 		}
 	}
 }
@@ -192,9 +192,9 @@ func (this *Conn) writePump() (err error) {
 func (this *Conn) readPump() error {
 	heartInterval := *this.opt.HeartInterval
 	// 【修改点】优化超时策略
-	// 发送间隔是 0.5 * heartInterval。
-	// 将超时设为 1.2 * heartInterval (或者 heartInterval + 2*time.Second)。
-	// 意义：允许丢失 1 个心跳包 (0.5)，并允许第 2 个心跳包 (1.0) 晚到 20% 的时间。
+	// 发送间隔是  heartInterval。
+	// 将超时设为 2.2 * heartInterval (或者 heartInterval + 2*time.Second)。
+	// 意义：允许丢失 1 个心跳包 (1)，并允许第 2 个心跳包 (2) 晚到 20% 的时间。
 	// 这比 2.0 倍敏感得多，能更快发现断连，同时防止轻微抖动导致的误断。
 	readTimeout := time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
 	for {
