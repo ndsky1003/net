@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -110,18 +111,24 @@ func TestClientServerCommunication(t *testing.T) {
 	// 1. 启动服务器
 	serverAddr := "127.0.0.1:8082" // 使用不同的端口避免与旧测试冲突
 	serverMgr := newTestServiceManager()
-	serverInst := server.New(serverMgr, server.Options().SetSecret("mysecret"))
+	serverInst := server.New(context.Background(), serverMgr, server.Options().SetSecret("mysecret"))
 
-	serverErrCh := make(chan error, 1)
+	var serverWg sync.WaitGroup
+	serverWg.Add(1)
 	go func() {
-		serverErrCh <- serverInst.Listen(serverAddr)
+		defer serverWg.Done()
+		serverInst.Listen(serverAddr)
 	}()
 	time.Sleep(100 * time.Millisecond)
+	defer func() {
+		serverInst.Close()
+		serverWg.Wait()
+	}()
 
 	// 2. 创建客户端
 	clientHandler := &echoHandler{}
 	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("mysecret")
-	clientInst, err := client.Dial("testClient", serverAddr, clientOpts)
+	clientInst, err := client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
 	if err != nil {
 		t.Fatalf("Client Dial failed: %v", err)
 	}
@@ -153,7 +160,4 @@ func TestClientServerCommunication(t *testing.T) {
 
 	// 5. 关闭
 	serverInst.Close()
-	if err := <-serverErrCh; err != nil {
-		t.Logf("Server exited with an expected error on close: %v", err)
-	}
 }

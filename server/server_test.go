@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -11,6 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// pingServer repeatedly attempts to connect to the given address until successful or a timeout.
+func pingServer(addr string, timeout time.Duration) error {
+	done := time.After(timeout)
+	for {
+		select {
+		case <-done:
+			return fmt.Errorf("pingServer timed out after %v for address %s", timeout, addr)
+		default:
+			conn, err := net.Dial("tcp", addr)
+			if err == nil {
+				conn.Close()
+				return nil
+			}
+			time.Sleep(50 * time.Millisecond) // Wait a bit before retrying
+		}
+	}
+}
+
+// Helper to get a free TCP address
 // mockServiceManager is a mock implementation of the service_manager interface for testing.
 type mockServiceManager struct {
 	mu              sync.Mutex
@@ -29,7 +50,7 @@ func newMockServiceManager() *mockServiceManager {
 		connects:    make(map[string]*conn.Conn),
 		disconnects: make(map[string]error),
 		messages:    make(map[string][][]byte),
-		connectCh:   make(chan struct{}, 1),
+		connectCh:   make(chan struct{}, 100),
 	}
 }
 
@@ -86,182 +107,164 @@ func (m *mockServiceManager) ConnectionCount() int {
 
 func TestNewServer(t *testing.T) {
 	mgr := newMockServiceManager()
-	s := New(mgr)
+	s := New(context.Background(), mgr)
 	require.NotNil(t, s)
 	assert.NotNil(t, s.opt)
 	assert.Equal(t, mgr, s.mgr)
 }
 
-// func TestServerListenAndClose(t *testing.T) {
-// 	mgr := newMockServiceManager()
-// 	s := New(mgr)
-// 	addr := "127.0.0.1:0" // Use port 0 to let the OS choose a free port
-
-// 	var listener net.Listener
-// 	var err error
-// 	// Retry listening to avoid port conflicts in CI
-// 	for i := 0; i < 3; i++ {
-// 		listener, err = net.Listen("tcp", addr)
-// 		if err == nil {
-// 			addr = listener.Addr().String()
-// 			listener.Close()
-// 			break
-// 		}
-// 		time.Sleep(100 * time.Millisecond)
-// 	}
-// 	require.NoError(t, err, "could not find a free port to listen on")
-
-// 	errCh := make(chan error, 1)
-// 	go func() {
-// 		errCh <- s.Listen(addr)
-// 	}()
-
-// 	// Give the server a moment to start listening
-// 	time.Sleep(100 * time.Millisecond)
-
-// 	// Attempt to connect to ensure the server is up
-// 	clientConn, err := net.Dial("tcp", addr)
-// 	require.NoError(t, err, "server should be listening")
-// 	clientConn.Close()
-
-// 	// Now close the server
-// 	err = s.Close()
-// 	assert.NoError(t, err)
-
-// 	// The Listen goroutine should exit gracefully
-// 	select {
-// 	case listenErr := <-errCh:
-// 		assert.NoError(t, listenErr, "Listen should exit without error on Close")
-// 	case <-time.After(1 * time.Second):
-// 		t.Fatal("server did not shut down gracefully")
-// 	}
-
-// 	assert.True(t, mgr.closeCalled, "service manager's Close should be called")
-// }
-
-// func TestServerAuthentication(t *testing.T) {
-
-// 	secret := "my-secret-key"
-
-// 	mgr := newMockServiceManager()
-
-// 	s := New(mgr, Options().SetSecret(secret))
-
-// 	addr := "127.0.0.1:0"
-
-
-
-// 	listener, err := net.Listen("tcp", addr)
-
-// 	require.NoError(t, err)
-
-// 	addr = listener.Addr().String()
-
-// 	listener.Close()
-
-
-
-// 	t.Run("Successful Authentication", func(t *testing.T) {
-
-// 		conn, err := net.Dial("tcp", addr)
-
-// 		require.NoError(t, err)
-
-// 		defer conn.Close()
-
-
-
-// 		// Send the correct secret
-
-// 		_, err = conn.Write([]byte(secret))
-
-// 		require.NoError(t, err)
-
-
-
-// 		// Expect auth success byte
-
-// 		response := make([]byte, 1)
-
-// 		_, err = conn.Read(response)
-
-// 		require.NoError(t, err)
-
-// 		assert.Equal(t, byte(0x0C), response[0])
-
-// 	})
-
-
-
-// 	t.Run("Failed Authentication", func(t *testing.T) {
-
-// 		conn, err := net.Dial("tcp", addr)
-
-// 		require.NoError(t, err)
-
-// 		defer conn.Close()
-
-
-
-// 		// Send the wrong secret
-
-// 		_, err = conn.Write([]byte("wrong-secret"))
-
-// 		require.NoError(t, err)
-
-
-
-// 		// Expect auth fail byte
-
-// 		response := make([]byte, 1)
-
-// 		_, err = conn.Read(response)
-
-// 		require.NoError(t, err)
-
-// 		assert.Equal(t, byte(0x00), response[0])
-
-
-
-// 		// The connection should be closed by the server immediately after
-
-// 		_, err = conn.Read(make([]byte, 1))
-
-// 		assert.Error(t, err, "connection should be closed after failed auth")
-
-// 	})
-
-// }
-
-// func TestServerMultipleListeners(t *testing.T) {
-// 	mgr := newMockServiceManager()
-// 	s := New(mgr)
-
-// 	// Get two free ports
-// 	addr1, l1 := getFreeAddr(t)
-// 	l1.Close()
-// 	addr2, l2 := getFreeAddr(t)
-// 	l2.Close()
-
-// 	errCh := make(chan error, 1)
-// 	go func() {
-// 		errCh <- s.Listen(addr1, addr2)
-// 	}()
-// 	defer s.Close()
-// 	time.Sleep(100 * time.Millisecond)
-
-// 	// Test connection to the first address
-// 	conn1, err := net.Dial("tcp", addr1)
-// 	require.NoError(t, err)
-// 	conn1.Close()
-// 	time.Sleep(100 * time.Millisecond)
-
-// 	// Test connection to the second address
-// 	conn2, err := net.Dial("tcp", addr2)
-// 	require.NoError(t, err)
-// 	conn2.Close()
-// 	time.Sleep(100 * time.Millisecond)
-// }
+func TestServerListenAndClose(t *testing.T) {
+	mgr := newMockServiceManager()
+	ctx := context.Background()
+	s := New(ctx, mgr)
+	addr := "127.0.0.1:0" // Use port 0 to let the OS choose a free port
+
+	var listener net.Listener
+	var err error
+	// Retry listening to avoid port conflicts in CI
+	for i := 0; i < 3; i++ {
+		listener, err = net.Listen("tcp", addr)
+		if err == nil {
+			addr = listener.Addr().String()
+			listener.Close()
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.NoError(t, err, "could not find a free port to listen on")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.Listen(addr)
+	}()
+
+	// Give the server a moment to start listening
+	time.Sleep(100 * time.Millisecond)
+
+	// Attempt to connect to ensure the server is up
+	clientConn, err := net.Dial("tcp", addr)
+	require.NoError(t, err, "server should be listening")
+	clientConn.Close()
+
+	// Now close the server
+	err = s.Close()
+	assert.NoError(t, err)
+
+	wg.Wait() // Wait for the Listen goroutine to exit
+
+	assert.True(t, mgr.closeCalled, "service manager's Close should be called")
+}
+
+func TestServerAuthentication(t *testing.T) {
+	t.Parallel()
+	secret := "my-secret-key"
+
+	mgr := newMockServiceManager()
+	ctx := context.Background()
+	s := New(ctx, mgr, Options().SetSecret(secret))
+
+	addr := "127.0.0.1:8080" // Use a fixed port for simplicity
+
+	var serverWg sync.WaitGroup
+	serverWg.Add(1)
+	go func() {
+		defer serverWg.Done()
+		if err := s.Listen(addr); err != nil {
+			t.Errorf("TestServerAuthentication server.Listen exited with error: %v", err)
+		}
+	}()
+
+	// Wait for the server to be ready to accept connections
+	require.NoError(t, pingServer(addr, 5*time.Second), "server did not become ready for authentication test")
+
+	defer func() {
+		s.Close()
+		serverWg.Wait()
+	}()
+
+	t.Run("Successful Authentication", func(t *testing.T) {
+		t.Parallel()
+		conn, err := net.Dial("tcp", addr)
+		require.NoError(t, err, "client failed to dial server for successful authentication")
+		defer conn.Close()
+
+		// Send the correct secret
+		_, err = conn.Write([]byte(secret))
+		require.NoError(t, err)
+		time.Sleep(50 * time.Millisecond) // Give server time to process and respond
+
+		// Expect auth success byte
+		response := make([]byte, 1)
+		_, err = conn.Read(response)
+		require.NoError(t, err)
+		assert.Equal(t, byte(0x0C), response[0])
+	})
+
+	t.Run("Failed Authentication", func(t *testing.T) {
+		t.Parallel()
+		conn, err := net.Dial("tcp", addr)
+		require.NoError(t, err, "client failed to dial server for failed authentication")
+		defer conn.Close()
+
+		// Send the wrong secret
+		_, err = conn.Write([]byte("wrong-secret"))
+		require.NoError(t, err)
+		time.Sleep(50 * time.Millisecond) // Give server time to process and respond
+
+		// Expect auth fail byte
+		response := make([]byte, 1)
+		_, err = conn.Read(response)
+		require.NoError(t, err)
+		assert.Equal(t, byte(0x00), response[0])
+
+		// The connection should be closed by the server immediately after
+		_, err = conn.Read(make([]byte, 1))
+		assert.Error(t, err, "connection should be closed after failed auth")
+	})
+}
+
+
+
+func TestServerMultipleListeners(t *testing.T) {
+	t.Parallel()
+	mgr := newMockServiceManager()
+	ctx := context.Background()
+	s := New(ctx, mgr)
+
+	addr1 := "127.0.0.1:8081"
+	addr2 := "127.0.0.1:8082"
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := s.Listen(addr1, addr2); err != nil {
+			t.Errorf("TestServerMultipleListeners server.Listen exited with error: %v", err)
+		}
+	}()
+	defer func() {
+		s.Close()
+		wg.Wait()
+	}()
+
+	// Wait for both servers to be ready
+	require.NoError(t, pingServer(addr1, 5*time.Second))
+	require.NoError(t, pingServer(addr2, 5*time.Second))
+
+	// Test connection to the first address
+	conn1, err := net.Dial("tcp", addr1)
+	require.NoError(t, err)
+	conn1.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	// Test connection to the second address
+	conn2, err := net.Dial("tcp", addr2)
+	require.NoError(t, err)
+	conn2.Close()
+	time.Sleep(100 * time.Millisecond)
+}
 
 func TestOptionMerging(t *testing.T) {
 	t.Run("Default options", func(t *testing.T) {
@@ -338,10 +341,9 @@ func TestOptionMerging(t *testing.T) {
 func TestServerWithConnOptions(t *testing.T) {
 	t.Run("Verify ReadDeadline option", func(t *testing.T) {
 		deadline := 10 * time.Second
-		options := Options().SetReadDeadline(deadline)
-		mgr := newMockServiceManager()
-		s := New(mgr, options)
-
+		        options := Options().SetReadDeadline(deadline)
+		        mgr := newMockServiceManager()
+		        s := New(context.Background(), mgr, options)
 		require.NotNil(t, s.opt)
 		assert.NotNil(t, s.opt.ReadDeadline)
 		assert.Equal(t, deadline, *s.opt.ReadDeadline)
@@ -351,7 +353,7 @@ func TestServerWithConnOptions(t *testing.T) {
 		size := 256
 		options := Options().SetSendChanSize(size)
 		mgr := newMockServiceManager()
-		s := New(mgr, options)
+		s := New(context.Background(), mgr, options)
 
 		require.NotNil(t, s.opt)
 		assert.NotNil(t, s.opt.SendChanSize)
@@ -362,7 +364,7 @@ func TestServerWithConnOptions(t *testing.T) {
 		interval := 30 * time.Second
 		options := Options().SetHeartInterval(interval)
 		mgr := newMockServiceManager()
-		s := New(mgr, options)
+		s := New(context.Background(), mgr, options)
 
 		require.NotNil(t, s.opt)
 		assert.NotNil(t, s.opt.HeartInterval)
@@ -373,7 +375,7 @@ func TestServerWithConnOptions(t *testing.T) {
 		maxSize := uint64(4096)
 		options := Options().SetMaxFrameSize(maxSize)
 		mgr := newMockServiceManager()
-		s := New(mgr, options)
+		s := New(context.Background(), mgr, options)
 
 		require.NotNil(t, s.opt)
 		assert.NotNil(t, s.opt.MaxFrameSize)
@@ -385,7 +387,7 @@ func TestServerWithConnOptions(t *testing.T) {
 		sendChanSize := 128
 		options := Options().SetReadDeadline(readDeadline).SetSendChanSize(sendChanSize)
 		mgr := newMockServiceManager()
-		s := New(mgr, options)
+		s := New(context.Background(), mgr, options)
 
 		require.NotNil(t, s.opt)
 		assert.NotNil(t, s.opt.ReadDeadline)
@@ -395,9 +397,3 @@ func TestServerWithConnOptions(t *testing.T) {
 	})
 }
 
-// Helper to get a free TCP address
-func getFreeAddr(t *testing.T) (string, net.Listener) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	return l.Addr().String(), l
-}

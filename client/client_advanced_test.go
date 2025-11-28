@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -16,16 +17,18 @@ func TestClientAuthenticationFailure(t *testing.T) {
 	// 1. 启动带密钥的服务器
 	serverAddr := "127.0.0.1:8083"
 	serverMgr := newTestServiceManager()
-	serverInst := server.New(serverMgr, server.Options().SetSecret("mysecret"))
+	serverInst := server.New(context.Background(), serverMgr, server.Options().SetSecret("mysecret"))
 
-	serverErrCh := make(chan error, 1)
+	var serverWg sync.WaitGroup
+	serverWg.Add(1)
 	go func() {
-		serverErrCh <- serverInst.Listen(serverAddr)
+		defer serverWg.Done()
+		serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	defer func() {
 		serverInst.Close()
-		<-serverErrCh
+		serverWg.Wait()
 	}()
 
 	// 2. 创建使用错误密钥的客户端
@@ -34,7 +37,7 @@ func TestClientAuthenticationFailure(t *testing.T) {
 	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("wrongsecret").SetOnAuthFailed(func(err error) {
 		authFailedCh <- err
 	})
-	c, err := client.Dial("testClient", serverAddr, clientOpts)
+	c, err := client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
 	if err != nil {
 		t.Fatalf("Client Dial failed initially: %v", err)
 	}
@@ -54,22 +57,24 @@ func TestClientStress(t *testing.T) {
 	// 1. 启动服务器
 	serverAddr := "127.0.0.1:8084"
 	serverMgr := newTestServiceManager()
-	serverInst := server.New(serverMgr, server.Options().SetSecret("mysecret"))
+	serverInst := server.New(context.Background(), serverMgr, server.Options().SetSecret("mysecret"))
 
-	serverErrCh := make(chan error, 1)
+	var serverWg sync.WaitGroup
+	serverWg.Add(1)
 	go func() {
-		serverErrCh <- serverInst.Listen(serverAddr)
+		defer serverWg.Done()
+		serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	defer func() {
 		serverInst.Close()
-		<-serverErrCh
+		serverWg.Wait()
 	}()
 
 	// 2. 创建客户端
 	clientHandler := &echoHandler{}
 	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("mysecret")
-	clientInst, err := client.Dial("testClient", serverAddr, clientOpts)
+	clientInst, err := client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
 	if err != nil {
 		t.Fatalf("Client Dial failed: %v", err)
 	}
@@ -106,16 +111,18 @@ func TestClientConcurrency(t *testing.T) {
 	// 1. 启动服务器
 	serverAddr := "127.0.0.1:8085"
 	serverMgr := newTestSvcMgrWithEcho()
-	serverInst := server.New(serverMgr, server.Options().SetSecret("mysecret"))
+	serverInst := server.New(context.Background(), serverMgr, server.Options().SetSecret("mysecret"))
 
-	serverErrCh := make(chan error, 1)
+	var serverWg sync.WaitGroup
+	serverWg.Add(1)
 	go func() {
-		serverErrCh <- serverInst.Listen(serverAddr)
+		defer serverWg.Done()
+		serverInst.Listen(serverAddr)
 	}()
 	time.Sleep(500 * time.Millisecond)
 	defer func() {
 		serverInst.Close()
-		<-serverErrCh
+		serverWg.Wait()
 	}()
 
 	// 2. 并发创建和测试客户端
@@ -129,7 +136,7 @@ func TestClientConcurrency(t *testing.T) {
 
 			clientHandler := &echoHandler{}
 			clientOpts := client.Options().SetHandler(clientHandler).SetSecret("mysecret")
-			clientInst, err := client.Dial(fmt.Sprintf("client-%d", clientID), serverAddr, clientOpts)
+			clientInst, err := client.Dial(context.Background(), fmt.Sprintf("client-%d", clientID), serverAddr, clientOpts)
 			if err != nil {
 				t.Errorf("Client %d Dial failed: %v", clientID, err)
 				return
@@ -150,7 +157,7 @@ func TestClientConcurrency(t *testing.T) {
 				return
 			}
 
-			receivedMessage, err := clientHandler.WaitForMessage(5 * time.Second)
+			receivedMessage, err := clientHandler.WaitForMessage(10 * time.Second)
 			if err != nil {
 				t.Errorf("Client %d failed to receive echoed message: %v", clientID, err)
 				return

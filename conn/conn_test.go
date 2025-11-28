@@ -1,6 +1,7 @@
 package conn
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -21,7 +22,7 @@ func TestHeartbeatTimeout(t *testing.T) {
 	opts := Options().SetHeartInterval(heartbeatInterval)
 
 	// 4. 创建服务端的 Conn
-	serverConn := New(serverRaw, handler, opts)
+	serverConn := New(context.Background(), serverRaw, handler, opts)
 
 	// 5. 启动服务端的 Serve() 协程，这是测试的核心目标
 	//    我们期望它会在心跳超时后返回错误并退出

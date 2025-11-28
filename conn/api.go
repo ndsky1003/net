@@ -37,8 +37,8 @@ func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
 	}
 
 	if timeout := opt.SendChanTimeout; timeout != nil {
-		ctx, cancle := context.WithTimeout(context.Background(), *timeout)
-		defer cancle()
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
 		select {
 		case this.sendChan <- msg:
 		case <-ctx.Done():
