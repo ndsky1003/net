@@ -21,6 +21,7 @@ type server struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+	once      sync.Once
 }
 
 func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
@@ -34,6 +35,7 @@ func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
 }
 
 func (this *server) Listen(addrs ...string) (err error) {
+	defer this.Close()
 	length := len(addrs)
 	listeners := make([]net.Listener, 0, length)
 	errCh := make(chan error, length)
@@ -82,27 +84,34 @@ func (this *server) acceptListener(listener net.Listener) error {
 	for {
 		connRaw, err := listener.Accept()
 		if err != nil {
+			// 1. 优先检查 Context 是否取消（服务器关闭信号）
 			if this.ctx.Err() != nil {
-				// 上下文被取消，正常退出
 				return nil
 			}
-			// 检查是否为临时错误
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				if tempDelay == 0 {
-					tempDelay = 5 * time.Millisecond
-				} else {
-					tempDelay *= 2
-				}
-				if tempDelay > 1*time.Second {
-					tempDelay = 1 * time.Second
-				}
-				log.Printf("Accept error: %v; retrying in %v", err, tempDelay)
-				time.Sleep(tempDelay)
-				continue
+
+			// 2. 【现代写法】检查是否是连接已关闭错误 (net.ErrClosed)
+			// Go 1.16+ 引入了 net.ErrClosed，这是最准确的判断方式
+			if errors.Is(err, net.ErrClosed) {
+				return nil // 正常退出
 			}
-			tempDelay = 0 // 重置延迟
-			return fmt.Errorf("accept err:%w", err)
+
+			// 3. 对于所有其他错误（超时、EMFILE、网络抖动等），都视为“临时错误”进行退避重试
+			// 这样既避免了使用弃用的 Temporary()，也能防止因文件句柄耗尽导致服务器崩溃
+			if tempDelay == 0 {
+				tempDelay = 5 * time.Millisecond
+			} else {
+				tempDelay *= 2
+			}
+			if tempDelay > 1*time.Second {
+				tempDelay = 1 * time.Second
+			}
+
+			log.Printf("Accept error: %v; retrying in %v", err, tempDelay)
+			time.Sleep(tempDelay)
+			continue
 		}
+		// 成功建立连接，重置延迟
+		tempDelay = 0
 		sid := this.genSessionID(this.idCounter.Add(1))
 		helper := &handler_helper{
 			sid:    sid,
@@ -165,8 +174,11 @@ func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 	return
 }
 
-func (this *server) Close() error {
-	this.cancel()
-	this.wg.Wait()
-	return nil
+func (this *server) Close() (err error) {
+	this.once.Do(func() {
+		this.cancel()
+		this.wg.Wait()
+		err = this.mgr.Close()
+	})
+	return
 }
