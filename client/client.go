@@ -140,13 +140,13 @@ func (this *Client) getConn() *conn.Conn {
 	return this.conn.Load()
 }
 
-func (this *Client) Send(data []byte, opts ...*Option) error {
+func (this *Client) Send(ctx context.Context, data []byte, opts ...*Option) error {
 	conn := this.getConn()
 	if conn == nil {
 		return errors.New("connection not established")
 	}
 	opt := Options().Merge(this.opt).Merge(opts...)
-	return conn.Send(data, &opt.Option)
+	return conn.Send(ctx, data, &opt.Option)
 }
 
 func (this *Client) verify(c *conn.Conn) (err error) {
@@ -157,7 +157,7 @@ func (this *Client) verify(c *conn.Conn) (err error) {
 		return
 	}
 
-	res, err := c.Read(conn.Options().SetReadDeadline(5 * time.Second))
+	res, err := c.Read(conn.Options().SetReadTimeout(5 * time.Second))
 	if err != nil {
 		return fmt.Errorf("read auth response failed: %w", err)
 	}

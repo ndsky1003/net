@@ -53,7 +53,7 @@ func (this *Conn) Send(ctx context.Context, data []byte, opts ...*Option) (err e
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("send timeout")
 		}
-		return fmt.Errorf("send cancelled")
+		return fmt.Errorf("send cancelled:%w", ctx.Err())
 	case this.sendChan <- msg:
 	}
 	return nil

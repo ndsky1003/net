@@ -37,8 +37,7 @@ func (this *server) Listen(addrs ...string) (err error) {
 	length := len(addrs)
 	listeners := make([]net.Listener, 0, length)
 	errCh := make(chan error, length)
-	for i := 0; i < length; i++ {
-		addr := addrs[i]
+	for i, addr := range addrs {
 		listener, err := this.listen(addr)
 		if err != nil {
 			// 清理已创建的监听器
@@ -121,7 +120,7 @@ const (
 func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 	defer this.wg.Done()
 	if this.opt.Secret != nil && *this.opt.Secret != "" {
-		if res, err := c.Read(conn.Options().SetReadDeadline(5 * time.Second)); err != nil {
+		if res, err := c.Read(conn.Options().SetReadTimeout(5 * time.Second)); err != nil {
 			return fmt.Errorf("read auth failed: %w", err)
 		} else if string(res) != *this.opt.Secret {
 			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {

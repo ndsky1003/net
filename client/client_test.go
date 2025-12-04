@@ -71,7 +71,7 @@ func (m *testServiceManager) OnMessage(sid string, data []byte) error {
 
 	if serverConn, ok := m.serverConns[sid]; ok {
 		go func() {
-			if err := serverConn.Send(data); err != nil {
+			if err := serverConn.Send(context.Background(), data); err != nil {
 				fmt.Printf("server failed to echo message: %v\n", err)
 			}
 		}()
@@ -144,7 +144,7 @@ func TestClientServerCommunication(t *testing.T) {
 
 	// 3. 发送和接收消息
 	sentMessage := []byte("Hello, world!")
-	if err := clientInst.Send(sentMessage); err != nil {
+	if err := clientInst.Send(context.Background(), sentMessage); err != nil {
 		t.Fatalf("Client failed to send message: %v", err)
 	}
 	receivedMessage, err := clientHandler.WaitForMessage(1 * time.Second)

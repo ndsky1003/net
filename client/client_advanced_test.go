@@ -92,7 +92,7 @@ func TestClientStress(t *testing.T) {
 	const messageCount = 1000
 	for i := 0; i < messageCount; i++ {
 		sentMessage := []byte(fmt.Sprintf("message %d", i))
-		if err := clientInst.Send(sentMessage); err != nil {
+		if err := clientInst.Send(context.Background(), sentMessage); err != nil {
 			t.Fatalf("Client failed to send message %d: %v", i, err)
 		}
 		receivedMessage, err := clientHandler.WaitForMessage(1 * time.Second)
@@ -152,7 +152,7 @@ func TestClientConcurrency(t *testing.T) {
 			}
 
 			sentMessage := []byte(fmt.Sprintf("Hello from client %d", clientID))
-			if err := clientInst.Send(sentMessage); err != nil {
+			if err := clientInst.Send(context.Background(), sentMessage); err != nil {
 				t.Errorf("Client %d failed to send message: %v", clientID, err)
 				return
 			}
@@ -200,7 +200,7 @@ func (m *echoServiceManager) OnMessage(sid string, data []byte) error {
 
 	if ok {
 		// 发送操作可能很慢，所以我们在锁的外部执行。
-		if err := c.Send(data); err != nil {
+		if err := c.Send(context.Background(), data); err != nil {
 			fmt.Printf("server failed to echo message to %s: %v\n", sid, err)
 		}
 	}

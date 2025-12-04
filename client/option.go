@@ -117,14 +117,15 @@ func (f handler_func) HandleMsg(data []byte) error {
 	return f(data)
 }
 
+// NOTE: 重写的目的,是方便返回的是当前的Option,而不是conn.Option
 // ---------------------重写conn.Option的设置函数---------------------
-func (this *Option) SetReadDeadline(t time.Duration) *Option {
-	this.ReadDeadline = &t
+func (this *Option) SetReadTimeout(t time.Duration) *Option {
+	this.ReadTimeout = &t
 	return this
 }
 
-func (this *Option) SetWriteDeadline(t time.Duration) *Option {
-	this.WriteDeadline = &t
+func (this *Option) SetWriteTimeout(t time.Duration) *Option {
+	this.WriteTimeout = &t
 	return this
 }
 
@@ -133,8 +134,8 @@ func (this *Option) SetSendChanTimeout(t time.Duration) *Option {
 	return this
 }
 
-func (this *Option) SetDeadline(t time.Duration) *Option {
-	this.SetReadDeadline(t).SetWriteDeadline(t)
+func (this *Option) SetTimeout(t time.Duration) *Option {
+	this.SetReadTimeout(t).SetWriteTimeout(t)
 	return this
 }
 

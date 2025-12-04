@@ -74,7 +74,7 @@ func (m *mockServiceManager) OnMessage(sid string, data []byte) error {
 	m.messages[sid] = append(m.messages[sid], data)
 	// Echo message back for some tests
 	if c, ok := m.connects[sid]; ok {
-		return c.Send(data)
+		return c.Send(context.Background(), data)
 	}
 	return nil
 }
@@ -122,7 +122,7 @@ func TestServerListenAndClose(t *testing.T) {
 	var listener net.Listener
 	var err error
 	// Retry listening to avoid port conflicts in CI
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		listener, err = net.Listen("tcp", addr)
 		if err == nil {
 			addr = listener.Addr().String()
@@ -225,8 +225,6 @@ func TestServerAuthentication(t *testing.T) {
 	})
 }
 
-
-
 func TestServerMultipleListeners(t *testing.T) {
 	t.Parallel()
 	mgr := newMockServiceManager()
@@ -271,14 +269,14 @@ func TestOptionMerging(t *testing.T) {
 		opt := Options()
 		assert.NotNil(t, opt)
 		assert.Nil(t, opt.Secret)
-		assert.Nil(t, opt.ReadDeadline)
+		assert.Nil(t, opt.ReadTimeout)
 	})
 
 	t.Run("Merge with Secret", func(t *testing.T) {
 		base := Options()
 		secretVal := "test-secret"
 		delta := Options().SetSecret(secretVal)
-		
+
 		merged := base.Merge(delta)
 		require.NotNil(t, merged)
 		assert.NotNil(t, merged.Secret)
@@ -289,25 +287,25 @@ func TestOptionMerging(t *testing.T) {
 		base := Options()
 		readDeadline := 5 * time.Second
 		sendChanSize := 100
-		
-		delta := Options().SetReadDeadline(readDeadline).SetSendChanSize(sendChanSize)
+
+		delta := Options().SetReadTimeout(readDeadline).SetSendChanSize(sendChanSize)
 
 		merged := base.Merge(delta)
 		require.NotNil(t, merged)
-		assert.NotNil(t, merged.ReadDeadline)
-		assert.Equal(t, readDeadline, *merged.ReadDeadline)
+		assert.NotNil(t, merged.ReadTimeout)
+		assert.Equal(t, readDeadline, *merged.ReadTimeout)
 		assert.NotNil(t, merged.SendChanSize)
 		assert.Equal(t, sendChanSize, *merged.SendChanSize)
 	})
 
 	t.Run("Merge multiple options", func(t *testing.T) {
 		base := Options()
-		
+
 		secretVal1 := "secret1"
 		opt1 := Options().SetSecret(secretVal1)
 
 		readDeadline := 10 * time.Second
-		opt2 := Options().SetReadDeadline(readDeadline)
+		opt2 := Options().SetReadTimeout(readDeadline)
 
 		sendChanSize := 200
 		opt3 := Options().SetSendChanSize(sendChanSize)
@@ -316,37 +314,37 @@ func TestOptionMerging(t *testing.T) {
 		require.NotNil(t, merged)
 		assert.NotNil(t, merged.Secret)
 		assert.Equal(t, secretVal1, *merged.Secret) // Opt1 should override base
-		
-		assert.NotNil(t, merged.ReadDeadline)
-		assert.Equal(t, readDeadline, *merged.ReadDeadline)
+
+		assert.NotNil(t, merged.ReadTimeout)
+		assert.Equal(t, readDeadline, *merged.ReadTimeout)
 
 		assert.NotNil(t, merged.SendChanSize)
 		assert.Equal(t, sendChanSize, *merged.SendChanSize)
 	})
 
 	t.Run("Merge nil delta option", func(t *testing.T) {
-		base := Options().SetSecret("initial").SetReadDeadline(1 * time.Second)
+		base := Options().SetSecret("initial").SetReadTimeout(1 * time.Second)
 		initialSecret := *base.Secret
-		initialReadDeadline := *base.ReadDeadline
+		initialReadDeadline := *base.ReadTimeout
 
 		merged := base.Merge(nil)
 		require.NotNil(t, merged)
 		assert.NotNil(t, merged.Secret)
 		assert.Equal(t, initialSecret, *merged.Secret)
-		assert.NotNil(t, merged.ReadDeadline)
-		assert.Equal(t, initialReadDeadline, *merged.ReadDeadline)
+		assert.NotNil(t, merged.ReadTimeout)
+		assert.Equal(t, initialReadDeadline, *merged.ReadTimeout)
 	})
 }
 
 func TestServerWithConnOptions(t *testing.T) {
 	t.Run("Verify ReadDeadline option", func(t *testing.T) {
 		deadline := 10 * time.Second
-		        options := Options().SetReadDeadline(deadline)
-		        mgr := newMockServiceManager()
-		        s := New(context.Background(), mgr, options)
+		options := Options().SetReadTimeout(deadline)
+		mgr := newMockServiceManager()
+		s := New(context.Background(), mgr, options)
 		require.NotNil(t, s.opt)
-		assert.NotNil(t, s.opt.ReadDeadline)
-		assert.Equal(t, deadline, *s.opt.ReadDeadline)
+		assert.NotNil(t, s.opt.ReadTimeout)
+		assert.Equal(t, deadline, *s.opt.ReadTimeout)
 	})
 
 	t.Run("Verify SendChanSize option", func(t *testing.T) {
@@ -385,15 +383,14 @@ func TestServerWithConnOptions(t *testing.T) {
 	t.Run("Verify multiple conn.Option fields", func(t *testing.T) {
 		readDeadline := 5 * time.Second
 		sendChanSize := 128
-		options := Options().SetReadDeadline(readDeadline).SetSendChanSize(sendChanSize)
+		options := Options().SetReadTimeout(readDeadline).SetSendChanSize(sendChanSize)
 		mgr := newMockServiceManager()
 		s := New(context.Background(), mgr, options)
 
 		require.NotNil(t, s.opt)
-		assert.NotNil(t, s.opt.ReadDeadline)
-		assert.Equal(t, readDeadline, *s.opt.ReadDeadline)
+		assert.NotNil(t, s.opt.ReadTimeout)
+		assert.Equal(t, readDeadline, *s.opt.ReadTimeout)
 		assert.NotNil(t, s.opt.SendChanSize)
 		assert.Equal(t, sendChanSize, *s.opt.SendChanSize)
 	})
 }
-
