@@ -47,7 +47,7 @@ type Conn struct {
 
 func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *Conn {
 	opt := Options().
-		SetDeadline(10 * time.Second).
+		SetTimeout(10 * time.Second).
 		SetReadTimeoutFactor(2.2).
 		SetHeartInterval(5 * time.Second).
 		SetSendChanSize(100).
@@ -75,7 +75,12 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	var size [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(size[:], uint64(length)+1)
 
-	if err = this.Conn.SetWriteDeadline(time.Now().Add(*opt.WriteDeadline)); err != nil {
+	var deadline time.Time
+	if opt.WriteTimeout != nil {
+		deadline = time.Now().Add(*opt.WriteTimeout)
+	}
+
+	if err = this.Conn.SetWriteDeadline(deadline); err != nil {
 		return
 	}
 
@@ -90,7 +95,7 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	if _, err = this.w.Write(data); err != nil {
 		return
 	}
-	return this.w.Flush()
+	return
 }
 
 // WARNING: 非线程安全，由 readPump 独占调用
@@ -98,7 +103,11 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
 	max_frame_size := *opt.MaxFrameSize
 
-	if err = this.Conn.SetReadDeadline(time.Now().Add(*opt.ReadDeadline)); err != nil {
+	var deadline time.Time
+	if opt.ReadTimeout != nil {
+		deadline = time.Now().Add(*opt.ReadTimeout)
+	}
+	if err = this.Conn.SetReadDeadline(deadline); err != nil {
 		return
 	}
 
@@ -124,11 +133,18 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	return
 }
 
-func (this *Conn) ping() error {
-	if err := this.write(flag_ping, []byte{}); err != nil {
-		return fmt.Errorf("ping:%w", err)
+func (this *Conn) ping() (err error) {
+
+	if err = this.write(flag_ping, []byte{}); err != nil {
+		err = fmt.Errorf("ping:%w", err)
+		return
 	}
-	return nil
+
+	if err = this.Flush(); err != nil {
+		return err
+	}
+
+	return
 }
 
 func (this *Conn) pong() error {
@@ -169,6 +185,20 @@ func (this *Conn) writePump() (err error) {
 			if err = this.write(msg.flag, msg.data, msg.opt); err != nil {
 				return err
 			}
+			// 2. 【关键策略】：检查通道里是否还有排队的数据？
+			// 如果还有，就继续循环去拿，暂不 Flush，为了拼成大包。
+			// 如果没有了，说明这波突发流量结束了，立刻 Flush 保证低延迟。
+			if len(this.sendChan) > 0 {
+				// 通道不为空，继续攒，直到填满 buffer 或者通道空了
+				// 注意：这里需要防止 buffer 无限大，可以加个阈值判断
+				if this.w.Buffered() < 4096 {
+					continue
+				}
+			}
+
+			if err = this.w.Flush(); err != nil {
+				return
+			}
 
 			// 发送成功，连接处于活跃状态，重置 PING 定时器
 			if !timer.Stop() {
@@ -202,7 +232,7 @@ func (this *Conn) readPump() error {
 	readTimeout := time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
 	for {
 		// 每次读取前设置 DeadLine，给连接“续命”
-		flag, body, err := this.read(Options().SetReadDeadline(readTimeout))
+		flag, body, err := this.read(Options().SetReadTimeout(readTimeout))
 		if err != nil {
 			// 如果超时，这里会返回 i/o timeout 错误
 			return fmt.Errorf("read error: %w", err)

@@ -8,18 +8,27 @@ import (
 )
 
 // WARNING: 非线程安全
+// 就是链接建立之前使用 --start
 func (this *Conn) Write(data []byte, opts ...*Option) (err error) {
 	return this.write(flag_msg, data, opts...)
 }
 
+// 就是链接建立之前使用
+func (this *Conn) Flush() error {
+	return this.w.Flush()
+}
+
 // WARNING: 非线程安全
+// 就是链接建立之前使用
 func (this *Conn) Read(opts ...*Option) (data []byte, err error) {
 	_, data, err = this.read(opts...)
 	return
 }
 
+// 就是链接建立之前使用 --end
+
 // WARNING: 线程安全
-func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
+func (this *Conn) Send(ctx context.Context, data []byte, opts ...*Option) (err error) {
 	if this.closed.Load() {
 		return fmt.Errorf("connection closed")
 	}
@@ -37,24 +46,19 @@ func (this *Conn) Send(data []byte, opts ...*Option) (err error) {
 	}
 
 	if timeout := opt.SendChanTimeout; timeout != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeout)
 		defer cancel()
-		select {
-		case this.sendChan <- msg:
-		case <-ctx.Done():
-			if ctx.Err() == context.DeadlineExceeded {
-				return fmt.Errorf("send timeout")
-			}
-			return fmt.Errorf("send cancelled")
-		case <-this.ctx.Done():
-			return fmt.Errorf("connection closed")
+	}
+	select {
+	case <-this.ctx.Done():
+		return fmt.Errorf("connection closed")
+	case <-ctx.Done():
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("send timeout")
 		}
-	} else {
-		select {
-		case this.sendChan <- msg:
-		case <-this.ctx.Done():
-			return fmt.Errorf("connection closed")
-		}
+		return fmt.Errorf("send cancelled")
+	case this.sendChan <- msg:
 	}
 	return nil
 }

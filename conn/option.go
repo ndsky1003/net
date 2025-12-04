@@ -4,9 +4,9 @@ package conn
 import "time"
 
 type Option struct {
-	ReadDeadline              *time.Duration
-	ReadTimeoutFactor         *float64 // 读超时倍数因子，默认1.2
-	WriteDeadline             *time.Duration
+	ReadTimeout               *time.Duration
+	ReadTimeoutFactor         *float64 // 读超时倍数因子，默认2.2
+	WriteTimeout              *time.Duration
 	SendChanTimeout           *time.Duration //不设置满了就会丢掉
 	HeartInterval             *time.Duration
 	SendChanSize              *int
@@ -24,8 +24,8 @@ func Options() *Option {
 	return &Option{}
 }
 
-func (this *Option) SetReadDeadline(t time.Duration) *Option {
-	this.ReadDeadline = &t
+func (this *Option) SetReadTimeout(t time.Duration) *Option {
+	this.ReadTimeout = &t
 	return this
 }
 
@@ -34,12 +34,12 @@ func (this *Option) SetReadTimeoutFactor(t float64) *Option {
 	return this
 }
 
-func (this *Option) SetDeadline(t time.Duration) *Option {
-	return this.SetReadDeadline(t).SetWriteDeadline(t)
+func (this *Option) SetTimeout(t time.Duration) *Option {
+	return this.SetReadTimeout(t).SetWriteTimeout(t)
 }
 
-func (this *Option) SetWriteDeadline(t time.Duration) *Option {
-	this.WriteDeadline = &t
+func (this *Option) SetWriteTimeout(t time.Duration) *Option {
+	this.WriteTimeout = &t
 	return this
 }
 
@@ -73,12 +73,12 @@ func (this *Option) merge(delta *Option) *Option {
 		return nil
 	}
 
-	if delta.ReadDeadline != nil {
-		this.ReadDeadline = delta.ReadDeadline
+	if delta.ReadTimeout != nil {
+		this.ReadTimeout = delta.ReadTimeout
 	}
 
-	if delta.WriteDeadline != nil {
-		this.WriteDeadline = delta.WriteDeadline
+	if delta.WriteTimeout != nil {
+		this.WriteTimeout = delta.WriteTimeout
 	}
 
 	if delta.SendChanTimeout != nil {
