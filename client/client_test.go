@@ -7,10 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ndsky1003/net/client"
+	net_client "github.com/ndsky1003/net/client"
 	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/server"
+
+	"github.com/stretchr/testify/require"
 )
+
 
 // 辅助结构，用于实现 conn.Handler 接口
 type echoHandler struct {
@@ -115,20 +118,33 @@ func TestClientServerCommunication(t *testing.T) {
 
 	var serverWg sync.WaitGroup
 	serverWg.Add(1)
+	serverErrCh := make(chan error, 1) // Channel to receive error from server.Listen
 	go func() {
 		defer serverWg.Done()
-		serverInst.Listen(serverAddr)
+		serverErrCh <- serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(100 * time.Millisecond)
+
+	// Wait for the server to either start listening or return an error
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			t.Fatalf("server.Listen exited with an unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second): // Max wait for server to start
+		t.Fatal("Server did not start listening within 5 seconds for communication test")
+	}
 	defer func() {
 		serverInst.Close()
 		serverWg.Wait()
 	}()
 
+	// Wait for the server to be ready to accept connections (pingServer also helps here)
+	require.NoError(t, net_client.PingServer(serverAddr, 5*time.Second), "server did not become ready for communication test")
+
 	// 2. 创建客户端
 	clientHandler := &echoHandler{}
-	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("mysecret")
-	clientInst, err := client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
+	clientOpts := net_client.Options().SetHandler(clientHandler).SetSecret("mysecret")
+	clientInst, err := net_client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
 	if err != nil {
 		t.Fatalf("Client Dial failed: %v", err)
 	}

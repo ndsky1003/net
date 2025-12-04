@@ -2,36 +2,18 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
+	net_client "github.com/ndsky1003/net/client"
 	"github.com/ndsky1003/net/conn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// pingServer repeatedly attempts to connect to the given address until successful or a timeout.
-func pingServer(addr string, timeout time.Duration) error {
-	done := time.After(timeout)
-	for {
-		select {
-		case <-done:
-			return fmt.Errorf("pingServer timed out after %v for address %s", timeout, addr)
-		default:
-			conn, err := net.Dial("tcp", addr)
-			if err == nil {
-				conn.Close()
-				return nil
-			}
-			time.Sleep(50 * time.Millisecond) // Wait a bit before retrying
-		}
-	}
-}
 
-// Helper to get a free TCP address
 // mockServiceManager is a mock implementation of the service_manager interface for testing.
 type mockServiceManager struct {
 	mu              sync.Mutex
@@ -169,15 +151,22 @@ func TestServerAuthentication(t *testing.T) {
 
 	var serverWg sync.WaitGroup
 	serverWg.Add(1)
+	serverErrCh := make(chan error, 1) // Channel to receive error from server.Listen
 	go func() {
 		defer serverWg.Done()
-		if err := s.Listen(addr); err != nil {
-			t.Errorf("TestServerAuthentication server.Listen exited with error: %v", err)
-		}
+		serverErrCh <- s.Listen(addr)
 	}()
 
-	// Wait for the server to be ready to accept connections
-	require.NoError(t, pingServer(addr, 5*time.Second), "server did not become ready for authentication test")
+	// Wait for the server to either start listening or return an error
+	select {
+	case err := <-serverErrCh:
+		require.NoError(t, err, "server.Listen exited with an unexpected error")
+	case <-time.After(5 * time.Second): // Max wait for server to start
+		t.Fatal("Server did not start listening within 5 seconds for authentication test")
+	}
+
+	// Wait for the server to be ready to accept connections (pingServer also helps here, but the above ensures Listen finished)
+	require.NoError(t, net_client.PingServer(addr, 5*time.Second), "server did not become ready for authentication test")
 
 	defer func() {
 		s.Close()
@@ -236,20 +225,27 @@ func TestServerMultipleListeners(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
+	serverErrCh := make(chan error, 1) // Channel to receive error from server.Listen
 	go func() {
 		defer wg.Done()
-		if err := s.Listen(addr1, addr2); err != nil {
-			t.Errorf("TestServerMultipleListeners server.Listen exited with error: %v", err)
-		}
+		serverErrCh <- s.Listen(addr1, addr2)
 	}()
+
+	// Wait for the server to either start listening or return an error
+	select {
+	case err := <-serverErrCh:
+		require.NoError(t, err, "server.Listen exited with an unexpected error")
+	case <-time.After(5 * time.Second): // Max wait for server to start
+		t.Fatal("Server did not start listening within 5 seconds for multiple listeners test")
+	}
 	defer func() {
 		s.Close()
 		wg.Wait()
 	}()
 
 	// Wait for both servers to be ready
-	require.NoError(t, pingServer(addr1, 5*time.Second))
-	require.NoError(t, pingServer(addr2, 5*time.Second))
+	require.NoError(t, net_client.PingServer(addr1, 5*time.Second))
+	require.NoError(t, net_client.PingServer(addr2, 5*time.Second))
 
 	// Test connection to the first address
 	conn1, err := net.Dial("tcp", addr1)

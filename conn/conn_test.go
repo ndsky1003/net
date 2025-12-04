@@ -28,8 +28,7 @@ func TestHeartbeatTimeout(t *testing.T) {
 	//    我们期望它会在心跳超时后返回错误并退出
 	serverErrChan := make(chan error, 1)
 	go func() {
-		// 增加 SetReadDeadline 是更健壮的做法，确保 readPump 及时退出
-		serverRaw.SetReadDeadline(time.Now())
+
 		serverErrChan <- serverConn.Serve()
 	}()
 

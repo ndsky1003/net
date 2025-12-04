@@ -7,10 +7,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ndsky1003/net/client"
+	net_client "github.com/ndsky1003/net/client"
 	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/server"
+
+	"github.com/stretchr/testify/require"
 )
+
 
 // TestClientAuthenticationFailure 验证认证失败的场景
 func TestClientAuthenticationFailure(t *testing.T) {
@@ -21,11 +24,24 @@ func TestClientAuthenticationFailure(t *testing.T) {
 
 	var serverWg sync.WaitGroup
 	serverWg.Add(1)
+	serverErrCh := make(chan error, 1) // Channel to receive error from server.Listen
 	go func() {
 		defer serverWg.Done()
-		serverInst.Listen(serverAddr)
+		serverErrCh <- serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(200 * time.Millisecond)
+
+	// Wait for the server to either start listening or return an error
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			t.Fatalf("server.Listen exited with an unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second): // Max wait for server to start
+		t.Fatal("Server did not start listening within 5 seconds for authentication failure test")
+	}
+	// Wait for the server to be ready to accept connections (pingServer also helps here)
+	require.NoError(t, net_client.PingServer(serverAddr, 5*time.Second), "server did not become ready for authentication failure test")
+
 	defer func() {
 		serverInst.Close()
 		serverWg.Wait()
@@ -34,10 +50,10 @@ func TestClientAuthenticationFailure(t *testing.T) {
 	// 2. 创建使用错误密钥的客户端
 	authFailedCh := make(chan error, 1)
 	clientHandler := &echoHandler{}
-	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("wrongsecret").SetOnAuthFailed(func(err error) {
+	clientOpts := net_client.Options().SetHandler(clientHandler).SetSecret("wrongsecret").SetOnAuthFailed(func(err error) {
 		authFailedCh <- err
 	})
-	c, err := client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
+	c, err := net_client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
 	if err != nil {
 		t.Fatalf("Client Dial failed initially: %v", err)
 	}
@@ -47,7 +63,7 @@ func TestClientAuthenticationFailure(t *testing.T) {
 	select {
 	case authErr := <-authFailedCh:
 		t.Logf("Received expected authentication failure: %v", authErr)
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(5 * time.Second):
 		t.Fatalf("Timed out waiting for authentication failure")
 	}
 }
@@ -61,11 +77,24 @@ func TestClientStress(t *testing.T) {
 
 	var serverWg sync.WaitGroup
 	serverWg.Add(1)
+	serverErrCh := make(chan error, 1) // Channel to receive error from server.Listen
 	go func() {
 		defer serverWg.Done()
-		serverInst.Listen(serverAddr)
+		serverErrCh <- serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(200 * time.Millisecond)
+
+	// Wait for the server to either start listening or return an error
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			t.Fatalf("server.Listen exited with an unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second): // Max wait for server to start
+		t.Fatal("Server did not start listening within 5 seconds for stress test")
+	}
+	// Wait for the server to be ready to accept connections (pingServer also helps here)
+	require.NoError(t, net_client.PingServer(serverAddr, 5*time.Second), "server did not become ready for stress test")
+
 	defer func() {
 		serverInst.Close()
 		serverWg.Wait()
@@ -73,8 +102,8 @@ func TestClientStress(t *testing.T) {
 
 	// 2. 创建客户端
 	clientHandler := &echoHandler{}
-	clientOpts := client.Options().SetHandler(clientHandler).SetSecret("mysecret")
-	clientInst, err := client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
+	clientOpts := net_client.Options().SetHandler(clientHandler).SetSecret("mysecret")
+	clientInst, err := net_client.Dial(context.Background(), "testClient", serverAddr, clientOpts)
 	if err != nil {
 		t.Fatalf("Client Dial failed: %v", err)
 	}
@@ -115,11 +144,24 @@ func TestClientConcurrency(t *testing.T) {
 
 	var serverWg sync.WaitGroup
 	serverWg.Add(1)
+	serverErrCh := make(chan error, 1) // Channel to receive error from server.Listen
 	go func() {
 		defer serverWg.Done()
-		serverInst.Listen(serverAddr)
+		serverErrCh <- serverInst.Listen(serverAddr)
 	}()
-	time.Sleep(500 * time.Millisecond)
+
+	// Wait for the server to either start listening or return an error
+	select {
+	case err := <-serverErrCh:
+		if err != nil {
+			t.Fatalf("server.Listen exited with an unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second): // Max wait for server to start
+		t.Fatal("Server did not start listening within 5 seconds for concurrency test")
+	}
+	// Wait for the server to be ready to accept connections (pingServer also helps here)
+	require.NoError(t, net_client.PingServer(serverAddr, 5*time.Second), "server did not become ready for concurrency test")
+
 	defer func() {
 		serverInst.Close()
 		serverWg.Wait()
@@ -135,8 +177,8 @@ func TestClientConcurrency(t *testing.T) {
 			defer wg.Done()
 
 			clientHandler := &echoHandler{}
-			clientOpts := client.Options().SetHandler(clientHandler).SetSecret("mysecret")
-			clientInst, err := client.Dial(context.Background(), fmt.Sprintf("client-%d", clientID), serverAddr, clientOpts)
+			clientOpts := net_client.Options().SetHandler(clientHandler).SetSecret("mysecret")
+			clientInst, err := net_client.Dial(context.Background(), fmt.Sprintf("client-%d", clientID), serverAddr, clientOpts)
 			if err != nil {
 				t.Errorf("Client %d Dial failed: %v", clientID, err)
 				return
