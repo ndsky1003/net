@@ -27,7 +27,7 @@ func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
 	ctx, cancel := context.WithCancel(ctx)
 	return &server{
 		mgr:    mgr,
-		opt:    Options().Merge(opts...),
+		opt:    Options().SetVerifyTimeout(5 * time.Second).Merge(opts...),
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -78,6 +78,7 @@ func (this *server) listen(url string) (net.Listener, error) {
 }
 
 func (this *server) acceptListener(listener net.Listener) error {
+	var tempDelay time.Duration // 临时错误重试延迟
 	for {
 		connRaw, err := listener.Accept()
 		if err != nil {
@@ -85,6 +86,21 @@ func (this *server) acceptListener(listener net.Listener) error {
 				// 上下文被取消，正常退出
 				return nil
 			}
+			// 检查是否为临时错误
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				if tempDelay == 0 {
+					tempDelay = 5 * time.Millisecond
+				} else {
+					tempDelay *= 2
+				}
+				if tempDelay > 1*time.Second {
+					tempDelay = 1 * time.Second
+				}
+				log.Printf("Accept error: %v; retrying in %v", err, tempDelay)
+				time.Sleep(tempDelay)
+				continue
+			}
+			tempDelay = 0 // 重置延迟
 			return fmt.Errorf("accept err:%w", err)
 		}
 		sid := this.genSessionID(this.idCounter.Add(1))
@@ -120,7 +136,11 @@ const (
 func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 	defer this.wg.Done()
 	if this.opt.Secret != nil && *this.opt.Secret != "" {
-		if res, err := c.Read(conn.Options().SetReadTimeout(5 * time.Second)); err != nil {
+		opt := conn.Options()
+		if this.opt.VerifyTimeout != nil {
+			opt.SetReadTimeout(*this.opt.VerifyTimeout)
+		}
+		if res, err := c.Read(opt); err != nil {
 			return fmt.Errorf("read auth failed: %w", err)
 		} else if string(res) != *this.opt.Secret {
 			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {
@@ -147,7 +167,6 @@ func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 
 func (this *server) Close() error {
 	this.cancel()
-	err := this.mgr.Close() //这里必须管道所有的conn.Close()，否则可能会出现死锁，wg无法退出
 	this.wg.Wait()
-	return err
+	return nil
 }

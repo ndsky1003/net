@@ -189,11 +189,7 @@ func (this *Conn) writePump() (err error) {
 			// 如果还有，就继续循环去拿，暂不 Flush，为了拼成大包。
 			// 如果没有了，说明这波突发流量结束了，立刻 Flush 保证低延迟。
 			if len(this.sendChan) > 0 {
-				// 通道不为空，继续攒，直到填满 buffer 或者通道空了
-				// 注意：这里需要防止 buffer 无限大，可以加个阈值判断
-				if this.w.Buffered() < 4096 {
-					continue
-				}
+				continue
 			}
 
 			if err = this.w.Flush(); err != nil {

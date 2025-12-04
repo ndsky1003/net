@@ -22,7 +22,15 @@ func (this *Conn) Flush() error {
 // WARNING: 非线程安全
 // 就是链接建立之前使用
 func (this *Conn) Read(opts ...*Option) (data []byte, err error) {
-	_, data, err = this.read(opts...)
+	var flag byte
+	flag, data, err = this.read(opts...)
+	if err != nil {
+		return nil, err
+	}
+	if flag != flag_msg {
+		// 如果收到的不是普通消息（例如收到了 Ping），在握手阶段应当视为协议错误或忽略
+		return nil, fmt.Errorf("unexpected flag during handshake: %d", flag)
+	}
 	return
 }
 

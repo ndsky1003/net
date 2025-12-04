@@ -7,7 +7,8 @@ import (
 )
 
 type Option struct {
-	Secret *string
+	Secret        *string
+	VerifyTimeout *time.Duration
 	conn.Option
 }
 
@@ -20,6 +21,11 @@ func (this *Option) SetSecret(s string) *Option {
 	return this
 }
 
+func (this *Option) SetVerifyTimeout(t time.Duration) *Option {
+	this.VerifyTimeout = &t
+	return this
+}
+
 func (this *Option) merge(delta *Option) *Option {
 	if this == nil || delta == nil {
 		return nil
@@ -27,6 +33,10 @@ func (this *Option) merge(delta *Option) *Option {
 
 	if delta.Secret != nil {
 		this.Secret = delta.Secret
+	}
+
+	if delta.VerifyTimeout != nil {
+		this.VerifyTimeout = delta.VerifyTimeout
 	}
 
 	this.Option.Merge(&delta.Option)

@@ -8,6 +8,7 @@ import (
 
 type Option struct {
 	Secret            *string
+	VerifyTimeout     *time.Duration
 	ReconnectInterval *time.Duration
 	conn.Handler
 	conn.Option
@@ -22,6 +23,11 @@ func Options() *Option {
 
 func (this *Option) SetOnConnected(f func()) *Option {
 	this.OnConnected = f
+	return this
+}
+
+func (this *Option) SetVerifyTimeout(t time.Duration) *Option {
+	this.VerifyTimeout = &t
 	return this
 }
 
@@ -63,6 +69,10 @@ func (this *Option) merge(delta *Option) *Option {
 
 	if delta.ReconnectInterval != nil {
 		this.ReconnectInterval = delta.ReconnectInterval
+	}
+
+	if delta.VerifyTimeout != nil {
+		this.VerifyTimeout = delta.VerifyTimeout
 	}
 
 	if delta.Secret != nil {

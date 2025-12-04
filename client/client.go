@@ -12,7 +12,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
-	"github.com/samber/lo"
 )
 
 // 定义认证常量
@@ -42,9 +41,13 @@ func Dial(ctx context.Context, name, url string, opts ...*Option) (c *Client, er
 	if url == "" {
 		return nil, errors.New("client Dail url is empty")
 	}
+	ver, err := uuid.NewV7()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate uuid: %w", err)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	c = &Client{
-		version: lo.Must(uuid.NewV7()),
+		version: ver,
 		name:    name,
 		url:     url,
 		opt:     Options().SetReconnectInterval(2 * time.Second).Merge(opts...),
@@ -156,8 +159,13 @@ func (this *Client) verify(c *conn.Conn) (err error) {
 	if err = c.Write([]byte(*this.opt.Secret)); err != nil {
 		return
 	}
+	opt := conn.Options()
 
-	res, err := c.Read(conn.Options().SetReadTimeout(5 * time.Second))
+	if this.opt.VerifyTimeout != nil {
+		opt.SetReadTimeout(*this.opt.VerifyTimeout)
+	}
+
+	res, err := c.Read(opt)
 	if err != nil {
 		return fmt.Errorf("read auth response failed: %w", err)
 	}
