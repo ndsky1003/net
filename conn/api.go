@@ -13,6 +13,7 @@ func (this *Conn) Write(data []byte, opts ...*Option) (err error) {
 	return this.write(flag_msg, data, opts...)
 }
 
+// WARNING: 非线程安全
 // 就是链接建立之前使用
 func (this *Conn) Flush() error {
 	return this.w.Flush()
@@ -33,13 +34,8 @@ func (this *Conn) Send(ctx context.Context, data []byte, opts ...*Option) (err e
 		return fmt.Errorf("connection closed")
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("connection closed:%w", err)
-		}
-	}()
 	opt := Options().Merge(this.opt).Merge(opts...)
-	msg := &msg{ //如果 Close() 先执行：sendChan 被关闭，select 会检测到通道关闭并panic
+	msg := &msg{
 		flag: flag_msg,
 		data: data,
 		opt:  opt,
@@ -126,7 +122,6 @@ func (this *Conn) Close() error {
 		f(discardedMsgs)
 		this.opt.SetOnCloseCallbackDiscardMsg(nil) // 释放回调
 	}
-	close(this.sendChan)
 
 	this.l.Lock()
 	err := this.closeErr
