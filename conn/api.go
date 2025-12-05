@@ -21,6 +21,11 @@ func (this *Conn) Flush() error {
 
 // WARNING: 非线程安全
 // 就是链接建立之前使用
+// WARN: HandleMsg 处理接收到的消息。
+// --------------
+// ⚠️ 警告 (MEMORY UNSAFE):
+// 传入的 data 切片直接引用连接内部的共享缓冲区 (readBuf)。
+// 该数据仅在 HandleMsg 函数同步执行期间有效！
 func (this *Conn) Read(opts ...*Option) (data []byte, err error) {
 	var flag byte
 	flag, data, err = this.read(opts...)

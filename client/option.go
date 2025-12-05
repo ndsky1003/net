@@ -12,7 +12,7 @@ type Option struct {
 	ReconnectInterval *time.Duration
 	conn.Handler
 	conn.Option
-	OnConnected    func() error // 这里有可能校验逻辑,返回所错误要跳出重连
+	OnConnected    func(*conn.Conn) error // 这里有可能校验逻辑,返回所错误要跳出重连
 	OnDisconnected func(err error)
 	OnAuthFailed   func(err error)
 }
@@ -21,7 +21,8 @@ func Options() *Option {
 	return &Option{}
 }
 
-func (this *Option) SetOnConnected(f func() error) *Option {
+// WARN: 这个函数在conn.Serve之前,所以只能使用conn.Write\Read\Flush等基础方法
+func (this *Option) SetOnConnected(f func(*conn.Conn) error) *Option {
 	this.OnConnected = f
 	return this
 }
