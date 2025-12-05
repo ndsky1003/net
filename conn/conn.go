@@ -41,6 +41,10 @@ type Conn struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// readBuf 用于复用读取内存，避免反复 make ,避免gc的碎片化问题
+	readBuf     []byte
+	shrinkCount int
+
 	l        sync.Mutex // protect closeErr
 	closeErr error
 }
@@ -51,7 +55,10 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		SetReadTimeoutFactor(2.2).
 		SetHeartInterval(5 * time.Second).
 		SetSendChanSize(100).
-		SetMaxFrameSize(64 * 1024).
+		SetReadBufferLimitSize(100 * 1024 * 1024). //100M
+		SetReadBufferMaxSize(64 * 1024).           //64k
+		SetReadBufferMinSize(4 * 1024).            //4k
+		SetShrinkThreshold(50).                    //50
 		Merge(opts...)
 	ctx, cancel := context.WithCancel(ctx)
 	c := &Conn{
@@ -63,6 +70,7 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		ctx:      ctx,
 		cancel:   cancel,
 		sendChan: make(chan *msg, *opt.SendChanSize),
+		readBuf:  make([]byte, 0, *opt.ReadBufferMinSize),
 	}
 	c.closed.Store(false)
 	return c
@@ -98,10 +106,22 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 	return
 }
 
+// 计算下一个梯子容量（2的幂次方，且 >= n）
+func nextPowerOf2(n int, minCap int) int {
+	if n <= minCap {
+		return minCap
+	}
+	cap := minCap
+	for cap < n {
+		cap <<= 1 // 乘以 2：4K -> 8K -> 16K -> 32K ...
+	}
+	return cap
+}
+
 // WARNING: 非线程安全，由 readPump 独占调用
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := Options().Merge(this.opt).Merge(opts...)
-	max_frame_size := *opt.MaxFrameSize
+	read_buf_limit_size := *opt.ReadBufferLimitSize
 
 	var deadline time.Time
 	if opt.ReadTimeout != nil {
@@ -115,21 +135,98 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	if err != nil {
 		return
 	}
-	if size > max_frame_size {
-		err = fmt.Errorf("frame size %d exceeds maximum %d", size, max_frame_size)
+
+	if size > read_buf_limit_size {
+		err = fmt.Errorf("frame size %d exceeds maximum %d", size, read_buf_limit_size)
 		return
 	}
+
 	if size == 0 {
 		err = fmt.Errorf("invalid frame size 0")
 		return
 	}
 
-	raw_data := make([]byte, size)
-	if _, err = io.ReadFull(this.r, raw_data); err != nil {
+	// ================== 梯子型内存管理 START ==================
+
+	currentCap := cap(this.readBuf)
+	minCap := *opt.ReadBufferMinSize
+	maxCap := *opt.ReadBufferMaxSize
+	shrinkThreshold := *opt.ShrinkThreshold
+
+	// 1. 判断是否属于突发超大流量 (> 64KB)
+	// 这种包不走梯子，直接临时分配，用完即毁，不污染 readBuf
+	if size > uint64(maxCap) {
+		// 临时分配，不修改 this.readBuf
+		tempBuf := make([]byte, size)
+		if _, err = io.ReadFull(this.r, tempBuf); err != nil {
+			return
+		}
+		flag = tempBuf[0]
+		data = tempBuf[1:]
 		return
 	}
-	flag = raw_data[0]
-	data = raw_data[1:]
+
+	// 计算当前 size 所需的“目标台阶”
+	targetCap := nextPowerOf2(int(size), *opt.ReadBufferMinSize) // 例如 size=5000 -> targetCap=8192
+
+	if currentCap >= targetCap {
+		// --- 情况 A：容量够用 ---
+
+		// 尝试触发【缩容逻辑】（下梯子）
+		// 只有当：
+		// 1. 当前容量比目标容量大很多（例如当前 64K，实际只需要 4K）
+		// 2. 且 连续 N 次都只需要这么小
+		// 我们才进行缩容。
+		// 这里判定标准是：currentCap > targetCap * 2 (即利用率低于 50% 甚至更低时考虑)
+		if currentCap > targetCap && currentCap > minCap {
+			// 如果当前容量是目标容量的 4 倍以上（利用率 < 25%），我们记一次数
+			if currentCap >= targetCap*4 {
+				this.shrinkCount++
+
+				// 只有连续 50 次都这么小，才真的缩容
+				if this.shrinkCount > shrinkThreshold {
+					// 缩容动作：容量减半（温和缩容），或者直接缩到 targetCap
+					// 这里建议直接缩到 targetCap，或者 targetCap * 2 留点余地
+					// 工业界通常做法：新建一个小的，把原来的丢给 GC
+					newCap := targetCap * 2 // 留一点余量防止马上又反弹
+					if newCap < currentCap {
+						this.readBuf = make([]byte, newCap)
+					}
+					this.shrinkCount = 0 // 重置计数
+				}
+			} else {
+				// 利用率还行，或者偶尔大包，重置计数器
+				this.shrinkCount = 0
+			}
+		} else {
+			// 容量合适，重置缩容计数
+			this.shrinkCount = 0
+		}
+
+		// 复用内存
+		this.readBuf = this.readBuf[:size]
+
+	} else {
+		// --- 情况 B：容量不够，需要扩容（上梯子）---
+
+		// 直接扩容到目标台阶，而不是只扩容到 size
+		// 例如：当前 4K，来了 5K 的包 -> 直接扩容到 8K
+		this.readBuf = make([]byte, targetCap)
+		this.readBuf = this.readBuf[:size]
+
+		// 扩容后，清空缩容计数
+		this.shrinkCount = 0
+	}
+
+	// ================== 梯子型内存管理 END ==================
+
+	// 读取数据
+	if _, err = io.ReadFull(this.r, this.readBuf); err != nil {
+		return
+	}
+
+	flag = this.readBuf[0]
+	data = this.readBuf[1:]
 	return
 }
 

@@ -149,6 +149,11 @@ func (this *Option) SetTimeout(t time.Duration) *Option {
 	return this
 }
 
+func (this *Option) SetReadTimeoutFactor(t float64) *Option {
+	this.ReadTimeoutFactor = &t
+	return this
+}
+
 func (this *Option) SetHeartInterval(t time.Duration) *Option {
 	this.HeartInterval = &t
 	return this
@@ -159,13 +164,28 @@ func (this *Option) SetSendChanSize(t int) *Option {
 	return this
 }
 
-func (this *Option) SetMaxFrameSize(delta uint64) *Option {
-	this.MaxFrameSize = &delta
+func (this *Option) SetOnCloseCallbackDiscardMsg(f func(data [][]byte)) *Option {
+	this.OnCloseCallbackDiscardMsg = f
 	return this
 }
 
-func (this *Option) SetOnCloseCallbackDiscardMsg(f func(data [][]byte)) *Option {
-	this.OnCloseCallbackDiscardMsg = f
+func (this *Option) SetReadBufferLimitSize(delta uint64) *Option {
+	this.ReadBufferLimitSize = &delta
+	return this
+}
+
+func (this *Option) SetReadBufferMinSize(size int) *Option {
+	this.ReadBufferMinSize = &size
+	return this
+}
+
+func (this *Option) SetReadBufferMaxSize(size int) *Option {
+	this.ReadBufferMaxSize = &size
+	return this
+}
+
+func (this *Option) SetShrinkThreshold(t int) *Option {
+	this.ShrinkThreshold = &t
 	return this
 }
 

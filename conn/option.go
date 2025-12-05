@@ -11,13 +11,11 @@ type Option struct {
 	HeartInterval             *time.Duration
 	SendChanSize              *int
 	OnCloseCallbackDiscardMsg func(data [][]byte)
-	// 适合大多数消息传递场景
-	//opt := Options().SetMaxFrameSize(64 * 1024)  // 64KB
-	// 适合大文件分块传输
-	//opt := Options().SetMaxFrameSize(10 * 1024 * 1024)  // 10MB
-	// 只有在特殊场景下才考虑 100M
-	//opt := Options().SetMaxFrameSize(100 * 1024 * 1024)  // 绝对上限！
-	MaxFrameSize *uint64
+
+	ReadBufferLimitSize *uint64 // 最大支持读取缓冲区大小,防止内存被撑爆 default 100M
+	ReadBufferMinSize   *int    // 读取缓冲区大小,最小值,用于动态扩容 default 4k
+	ReadBufferMaxSize   *int    // 读取缓冲区大小,最大值,用于动态扩容 default 64k
+	ShrinkThreshold     *int    // 读取缓冲区缩容阈值 ,default 50
 }
 
 func Options() *Option {
@@ -26,6 +24,26 @@ func Options() *Option {
 
 func (this *Option) SetReadTimeout(t time.Duration) *Option {
 	this.ReadTimeout = &t
+	return this
+}
+
+func (this *Option) SetReadBufferLimitSize(delta uint64) *Option {
+	this.ReadBufferLimitSize = &delta
+	return this
+}
+
+func (this *Option) SetReadBufferMinSize(size int) *Option {
+	this.ReadBufferMinSize = &size
+	return this
+}
+
+func (this *Option) SetReadBufferMaxSize(size int) *Option {
+	this.ReadBufferMaxSize = &size
+	return this
+}
+
+func (this *Option) SetShrinkThreshold(t int) *Option {
+	this.ShrinkThreshold = &t
 	return this
 }
 
@@ -55,11 +73,6 @@ func (this *Option) SetHeartInterval(t time.Duration) *Option {
 
 func (this *Option) SetSendChanSize(t int) *Option {
 	this.SendChanSize = &t
-	return this
-}
-
-func (this *Option) SetMaxFrameSize(delta uint64) *Option {
-	this.MaxFrameSize = &delta
 	return this
 }
 
@@ -97,8 +110,24 @@ func (this *Option) merge(delta *Option) *Option {
 		this.OnCloseCallbackDiscardMsg = delta.OnCloseCallbackDiscardMsg
 	}
 
-	if delta.MaxFrameSize != nil {
-		this.MaxFrameSize = delta.MaxFrameSize
+	if delta.ReadTimeoutFactor != nil {
+		this.ReadTimeoutFactor = delta.ReadTimeoutFactor
+	}
+
+	if delta.ReadBufferLimitSize != nil {
+		this.ReadBufferLimitSize = delta.ReadBufferLimitSize
+	}
+
+	if delta.ReadBufferMinSize != nil {
+		this.ReadBufferMinSize = delta.ReadBufferMinSize
+	}
+
+	if delta.ReadBufferMaxSize != nil {
+		this.ReadBufferMaxSize = delta.ReadBufferMaxSize
+	}
+
+	if delta.ShrinkThreshold != nil {
+		this.ShrinkThreshold = delta.ShrinkThreshold
 	}
 
 	return this

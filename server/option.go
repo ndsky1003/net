@@ -87,8 +87,23 @@ func (this *Option) SetSendChanSize(t int) *Option {
 	return this
 }
 
-func (this *Option) SetMaxFrameSize(delta uint64) *Option {
-	this.MaxFrameSize = &delta
+func (this *Option) SetReadBufferLimitSize(delta uint64) *Option {
+	this.ReadBufferLimitSize = &delta
+	return this
+}
+
+func (this *Option) SetReadBufferMinSize(size int) *Option {
+	this.ReadBufferMinSize = &size
+	return this
+}
+
+func (this *Option) SetReadBufferMaxSize(size int) *Option {
+	this.ReadBufferMaxSize = &size
+	return this
+}
+
+func (this *Option) SetShrinkThreshold(t int) *Option {
+	this.ShrinkThreshold = &t
 	return this
 }
 
