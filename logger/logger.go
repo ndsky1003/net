@@ -31,10 +31,6 @@ func SetGlobalLogger(l Logger) {
 	}
 }
 
-func GetLogger() Logger {
-	return globalLogger
-}
-
 // -------------------------------------------------------
 // 包级快捷函数 (Proxy)
 // -------------------------------------------------------
