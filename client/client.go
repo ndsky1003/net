@@ -185,12 +185,13 @@ func (this *Client) serve(conn *conn.Conn) (err error) {
 		conn.Close()
 		return
 	}
-	this.setConn(conn)
 	if this.opt.OnConnected != nil {
 		if err = this.opt.OnConnected(); err != nil {
+			conn.Close()
 			return
 		}
 	}
+	this.setConn(conn)
 	return conn.Serve()
 }
 
