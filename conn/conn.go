@@ -6,11 +6,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ndsky1003/net/logger"
 )
 
 const (
@@ -21,14 +22,24 @@ const (
 
 type Handler interface {
 	//WARN: HandleMsg 处理接收到的消息。
-	//  --------------
-	// ⚠️ 警告 (Memory Safety Warning):
-	// 传入的 data 切片底层引用了连接的共享读取缓冲区。
-	// 该数据仅在 HandleMsg 函数调用期间有效。
-	// ---------------
-	// 1. 如果你是同步处理（如反序列化、解析），直接使用 data 即可，性能最高。
-	// 2. 如果你需要异步处理（如 go func, 丢进 channel），或者需要长期持有该数据，
-	//    必须先拷贝一份：dataCopy := append([]byte(nil), data...)
+	//--------------
+	// ⚠️ 警告 (MEMORY UNSAFE):
+	// 传入的 data 切片直接引用连接内部的共享缓冲区 (readBuf)。
+	// 该数据仅在 HandleMsg 函数同步执行期间有效！
+	//--------------
+	// ✅ 安全做法 (同步处理):
+	//    1. 直接解析: json.Unmarshal(data, &obj)
+	//    2. 路由分发: router.Dispatch(data)
+	//--------------
+	// ❌ 危险做法 (异步/持有):
+	//    1. go func() { process(data) } // data 会被后续网络包覆盖，变脏数据
+	//    2. msgChan <- data             // 同上
+	//    3. globalCache = data          // 同上
+	//--------------
+	// 💡 如需异步处理，必须手动拷贝:
+	//    clone := make([]byte, len(data))
+	//    copy(clone, data)
+	//    go process(clone)
 	HandleMsg(data []byte) error
 }
 
@@ -348,11 +359,11 @@ func (this *Conn) readPump() error {
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							log.Printf("handler panic: %v", r)
+							logger.Infof("handler panic: %v", r)
 						}
 					}()
 					if err := this.handler.HandleMsg(body); err != nil {
-						log.Printf("handle msg error: %v", err)
+						logger.Infof("handle msg error: %v", err)
 					}
 				}()
 			}

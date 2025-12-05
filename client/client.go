@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/logger"
 )
 
 // 定义认证常量
@@ -72,7 +72,7 @@ func (this *Client) keepAlive() {
 		}
 		conn_raw, err := dialer.DialContext(this.ctx, "tcp", this.url)
 		if err != nil {
-			log.Println("err:", err)
+			logger.Info("err:", err)
 			// 如果是因为 context canceled 导致的错误，直接退出
 			if errors.Is(err, context.Canceled) {
 				return
@@ -91,7 +91,7 @@ func (this *Client) keepAlive() {
 			this.opt.OnDisconnected(err)
 		}
 		if err != nil {
-			log.Println("server:", err)
+			logger.Info("server:", err)
 		}
 		delay := this.getReconnectDelay(err)
 		select {

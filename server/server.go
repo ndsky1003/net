@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/logger"
 )
 
 type server struct {
@@ -106,7 +106,7 @@ func (this *server) acceptListener(listener net.Listener) error {
 				tempDelay = 1 * time.Second
 			}
 
-			log.Printf("Accept error: %v; retrying in %v", err, tempDelay)
+			logger.Infof("Accept error: %v; retrying in %v", err, tempDelay)
 			time.Sleep(tempDelay)
 			continue
 		}
@@ -153,7 +153,7 @@ func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 			return fmt.Errorf("read auth failed: %w", err)
 		} else if string(res) != *this.opt.Secret {
 			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {
-				log.Printf("failed to notify client of auth failure, sid: %s, err: %v", sid, writeErr)
+				logger.Infof("failed to notify client of auth failure, sid: %s, err: %v", sid, writeErr)
 			}
 			return errors.New("authentication failed")
 		}
