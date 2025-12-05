@@ -12,7 +12,7 @@ type Option struct {
 	ReconnectInterval *time.Duration
 	conn.Handler
 	conn.Option
-	OnConnected    func()
+	OnConnected    func() error // 这里有可能校验逻辑,返回所错误要跳出重连
 	OnDisconnected func(err error)
 	OnAuthFailed   func(err error)
 }
@@ -21,7 +21,7 @@ func Options() *Option {
 	return &Option{}
 }
 
-func (this *Option) SetOnConnected(f func()) *Option {
+func (this *Option) SetOnConnected(f func() error) *Option {
 	this.OnConnected = f
 	return this
 }

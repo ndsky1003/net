@@ -72,7 +72,7 @@ func (this *Client) keepAlive() {
 		}
 		conn_raw, err := dialer.DialContext(this.ctx, "tcp", this.url)
 		if err != nil {
-			logger.Info("err:", err)
+			logger.Errorf("keepAlive err:%v", err)
 			// 如果是因为 context canceled 导致的错误，直接退出
 			if errors.Is(err, context.Canceled) {
 				return
@@ -91,7 +91,7 @@ func (this *Client) keepAlive() {
 			this.opt.OnDisconnected(err)
 		}
 		if err != nil {
-			logger.Info("server:", err)
+			logger.Errorf("keepAlive server:%v", err)
 		}
 		delay := this.getReconnectDelay(err)
 		select {
@@ -187,7 +187,9 @@ func (this *Client) serve(conn *conn.Conn) (err error) {
 	}
 	this.setConn(conn)
 	if this.opt.OnConnected != nil {
-		this.opt.OnConnected()
+		if err = this.opt.OnConnected(); err != nil {
+			return
+		}
 	}
 	return conn.Serve()
 }
