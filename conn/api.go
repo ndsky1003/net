@@ -13,6 +13,10 @@ func (this *Conn) Write(data []byte, opts ...*Option) (err error) {
 	return this.write(flag_msg, data, opts...)
 }
 
+func (this *Conn) Writes(datas [][]byte, opts ...*Option) (err error) {
+	return this.writes(flag_msg, datas, opts...)
+}
+
 // WARNING: 非线程安全
 // 就是链接建立之前使用
 func (this *Conn) Flush() error {
@@ -43,6 +47,11 @@ func (this *Conn) Read(opts ...*Option) (data []byte, err error) {
 
 // WARNING: 线程安全
 func (this *Conn) Send(ctx context.Context, data []byte, opts ...*Option) (err error) {
+	return this.Sends(ctx, [][]byte{data}, opts...)
+}
+
+// WARNING: 线程安全
+func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (err error) {
 	if this.closed.Load() {
 		return fmt.Errorf("connection closed")
 	}
@@ -128,7 +137,7 @@ func (this *Conn) Close() error {
 	this.Conn.Close()
 
 	if f := this.opt.OnCloseCallbackDiscardMsg; f != nil {
-		var discardedMsgs [][]byte
+		var discardedMsgs [][][]byte
 		for msg := range this.sendChan {
 			discardedMsgs = append(discardedMsgs, msg.data)
 		}

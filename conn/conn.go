@@ -45,7 +45,7 @@ type Handler interface {
 
 type msg struct {
 	flag byte
-	data []byte
+	data [][]byte
 	opt  *Option
 }
 
@@ -98,8 +98,15 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 
 // WARNING: 非线程安全，由 writePump 独占调用
 func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
-	opt := Options().Merge(this.opt).Merge(opts...)
-	length := len(data)
+	return this.writes(flag, [][]byte{data}, opts...)
+}
+
+func (this *Conn) writes(flag byte, datas [][]byte, opts ...*Option) (err error) {
+	opt := Options().SetWriteTimeout(*this.opt.WriteTimeout).Merge(opts...)
+	length := 0
+	for _, data := range datas {
+		length += len(data)
+	}
 	var size [binary.MaxVarintLen64]byte
 	n := binary.PutUvarint(size[:], uint64(length)+1)
 
@@ -120,8 +127,10 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 		return
 	}
 
-	if _, err = this.w.Write(data); err != nil {
-		return
+	for _, data := range datas {
+		if _, err = this.w.Write(data); err != nil {
+			return
+		}
 	}
 	return
 }
@@ -299,7 +308,7 @@ func (this *Conn) writePump() (err error) {
 			}
 
 			// 发送数据（业务消息或 PONG）
-			if err = this.write(msg.flag, msg.data, msg.opt); err != nil {
+			if err = this.writes(msg.flag, msg.data, msg.opt); err != nil {
 				return err
 			}
 			// 2. 【关键策略】：检查通道里是否还有排队的数据？

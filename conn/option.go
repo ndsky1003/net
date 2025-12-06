@@ -10,7 +10,7 @@ type Option struct {
 	SendChanTimeout           *time.Duration //不设置满了就会丢掉
 	HeartInterval             *time.Duration
 	SendChanSize              *int
-	OnCloseCallbackDiscardMsg func(data [][]byte)
+	OnCloseCallbackDiscardMsg func(data [][][]byte) //分线的数据包,并没有再次合起来{header,meta,body}
 
 	ReadBufferLimitSize *uint64 // 最大支持读取缓冲区大小,防止内存被撑爆 default 100M
 	ReadBufferMinSize   *int    // 读取缓冲区大小,最小值,用于动态扩容 default 4k

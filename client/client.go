@@ -152,6 +152,15 @@ func (this *Client) Send(ctx context.Context, data []byte, opts ...*Option) erro
 	return conn.Send(ctx, data, &opt.Option)
 }
 
+func (this *Client) Sends(ctx context.Context, data [][]byte, opts ...*Option) error {
+	conn := this.getConn()
+	if conn == nil {
+		return errors.New("connection not established")
+	}
+	opt := Options().Merge(this.opt).Merge(opts...)
+	return conn.Sends(ctx, data, &opt.Option)
+}
+
 func (this *Client) verify(c *conn.Conn) (err error) {
 	if this.opt.Secret == nil || *this.opt.Secret == "" {
 		return
