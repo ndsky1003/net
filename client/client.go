@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/logger"
 )
@@ -24,7 +23,6 @@ var (
 )
 
 type Client struct {
-	version uuid.UUID
 	name    string
 	url     string
 	opt     *Option
@@ -41,19 +39,14 @@ func Dial(ctx context.Context, name, url string, opts ...*Option) (c *Client, er
 	if url == "" {
 		return nil, errors.New("client Dail url is empty")
 	}
-	ver, err := uuid.NewV7()
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate uuid: %w", err)
-	}
 	opt := Options().SetReconnectInterval(2 * time.Second).Merge(opts...)
 	ctx, cancel := context.WithCancel(ctx)
 	c = &Client{
-		version: ver,
-		name:    name,
-		url:     url,
-		opt:     &opt,
-		ctx:     ctx,
-		cancel:  cancel,
+		name:   name,
+		url:    url,
+		opt:    &opt,
+		ctx:    ctx,
+		cancel: cancel,
 	}
 	c.closeWg.Add(1)
 	go c.keepAlive()
@@ -221,10 +214,6 @@ func (this *Client) IsConnected() bool {
 
 func (this *Client) GetName() string {
 	return this.name
-}
-
-func (this *Client) GetVersion() uuid.UUID {
-	return this.version
 }
 
 func (this *Client) GetUrl() string {
