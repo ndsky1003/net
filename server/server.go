@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/logger"
 )
@@ -41,7 +42,10 @@ func (this *server) Listen(addrs ...string) (err error) {
 		listener, err := this.listen(addr)
 		if err != nil {
 			// 清理已创建的监听器
-			for j := 0; j < i; j++ {
+			// for j := 0; j < i; j++ {
+			// 	listeners[j].Close()
+			// }
+			for j := range i {
 				listeners[j].Close()
 			}
 			return err
@@ -109,14 +113,19 @@ func (this *server) acceptListener(listener net.Listener) error {
 			continue
 		}
 		// 成功建立连接，重置延迟
+		sid, err := uuid.NewV7()
+		if err != nil {
+			continue
+		}
 		tempDelay = 0
-		helper := &default_Session{
+		session := &default_Session{
+			sid: sid,
 			mgr: this.mgr,
 		}
-		conn := conn.New(this.ctx, connRaw, helper, &this.opt.Option)
-		helper.conn = conn
+		conn := conn.New(this.ctx, connRaw, session, &this.opt.Option)
+		session.conn = conn
 		this.wg.Add(1)
-		go this.handleConn(helper, conn)
+		go this.handleConn(session, conn)
 	}
 }
 
@@ -137,7 +146,7 @@ func (this *server) handleConn(s Session, c *conn.Conn) (err error) {
 			return fmt.Errorf("read auth failed: %w", err)
 		} else if string(res) != *this.opt.Secret {
 			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {
-				logger.Infof("failed to notify client of auth failure,  err: %v", writeErr)
+				logger.Infof("failed to notify client of auth failure sid:%v  err: %v", s.ID(), writeErr)
 			}
 			return errors.New("authentication failed")
 		}

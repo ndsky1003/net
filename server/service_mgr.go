@@ -43,7 +43,7 @@ func (this DefaultServiceManager) OnDisconnect(s Session, err error) error {
 }
 
 func (this DefaultServiceManager) OnMessage(s Session, data []byte) error {
-	logger.Infof("Service %s OnMessage", sid)
+	logger.Infof("Service %s OnMessage", s.ID())
 	return nil
 }
 
