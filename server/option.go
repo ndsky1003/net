@@ -3,6 +3,7 @@ package server
 import (
 	"time"
 
+	"github.com/ndsky1003/net/comm/ut"
 	"github.com/ndsky1003/net/conn"
 )
 
@@ -38,15 +39,10 @@ func (this *Option) merge(delta *Option) *Option {
 		return nil
 	}
 
-	if delta.Secret != nil {
-		this.Secret = delta.Secret
-	}
+	ut.ResolveOption(&this.Secret, delta.Secret)
+	ut.ResolveOption(&this.VerifyTimeout, delta.VerifyTimeout)
 
-	if delta.VerifyTimeout != nil {
-		this.VerifyTimeout = delta.VerifyTimeout
-	}
-
-	this.Option.Merge(&delta.Option)
+	this.Option = this.Option.Merge(&delta.Option)
 	return this
 }
 
