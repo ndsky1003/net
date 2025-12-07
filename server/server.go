@@ -6,22 +6,19 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/logger"
 )
 
 type server struct {
-	idCounter atomic.Int64
-	mgr       service_manager
-	opt       *Option
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	once      sync.Once
+	mgr    service_manager
+	opt    *Option
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	once   sync.Once
 }
 
 func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
@@ -113,28 +110,14 @@ func (this *server) acceptListener(listener net.Listener) error {
 		}
 		// 成功建立连接，重置延迟
 		tempDelay = 0
-		sid := this.genSessionID(this.idCounter.Add(1))
-		helper := &handler_helper{
-			sid:    sid,
-			server: this,
+		helper := &default_Session{
+			mgr: this.mgr,
 		}
 		conn := conn.New(this.ctx, connRaw, helper, &this.opt.Option)
+		helper.conn = conn
 		this.wg.Add(1)
-		go this.handleConn(sid, conn)
+		go this.handleConn(helper, conn)
 	}
-}
-
-func (this *server) genSessionID(index int64) string {
-	return fmt.Sprintf("%s-%d", uuid.New().String(), index)
-}
-
-type handler_helper struct {
-	sid string
-	*server
-}
-
-func (this *handler_helper) HandleMsg(data []byte) error {
-	return this.mgr.OnMessage(this.sid, data)
 }
 
 // 定义认证常量
@@ -143,7 +126,7 @@ const (
 	auth_fail_byte    = 0x00
 )
 
-func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
+func (this *server) handleConn(s Session, c *conn.Conn) (err error) {
 	defer this.wg.Done()
 	if this.opt.Secret != nil && *this.opt.Secret != "" {
 		opt := conn.Options()
@@ -154,7 +137,7 @@ func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 			return fmt.Errorf("read auth failed: %w", err)
 		} else if string(res) != *this.opt.Secret {
 			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {
-				logger.Infof("failed to notify client of auth failure, sid: %s, err: %v", sid, writeErr)
+				logger.Infof("failed to notify client of auth failure,  err: %v", writeErr)
 			}
 			return errors.New("authentication failed")
 		}
@@ -162,13 +145,13 @@ func (this *server) handleConn(sid string, c *conn.Conn) (err error) {
 			return
 		}
 	}
-	err = this.mgr.OnConnect(sid, c)
+	err = this.mgr.OnConnect(s)
 	if err != nil {
 		c.Close()
 		return
 	}
 	err = c.Serve()
-	disconnectErr := this.mgr.OnDisconnect(sid, err)
+	disconnectErr := this.mgr.OnDisconnect(s, err)
 	if err == nil {
 		err = disconnectErr
 	}

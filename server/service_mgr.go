@@ -1,7 +1,6 @@
 package server
 
 import (
-	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/logger"
 )
 
@@ -9,10 +8,10 @@ import (
 type service_manager interface {
 
 	// OnConnect 当新服务连接时调用
-	OnConnect(sid string, conn *conn.Conn) error
+	OnConnect(Session) error
 
 	// OnDisconnect 当服务断开时调用
-	OnDisconnect(serviceID string, err error) error
+	OnDisconnect(Session, error) error
 
 	// OnMessage 当收到服务消息时调用
 	//WARN: HandleMsg 处理接收到的消息。
@@ -24,7 +23,7 @@ type service_manager interface {
 	// 1. 如果你是同步处理（如反序列化、解析），直接使用 data 即可，性能最高。
 	// 2. 如果你需要异步处理（如 go func, 丢进 channel），或者需要长期持有该数据，
 	//    必须先拷贝一份：dataCopy := append([]byte(nil), data...)
-	OnMessage(sid string, data []byte) error
+	OnMessage(s Session, data []byte) error
 
 	// Close 清理资源。
 	Close() error
@@ -33,17 +32,17 @@ type service_manager interface {
 type DefaultServiceManager struct {
 }
 
-func (this DefaultServiceManager) OnConnect(sid string, conn *conn.Conn) error {
-	logger.Infof("Service %s connected", sid)
+func (this DefaultServiceManager) OnConnect(s Session) error {
+	logger.Infof("Service %s connected", s.ID())
 	return nil
 }
 
-func (this DefaultServiceManager) OnDisconnect(sid string, err error) error {
-	logger.Infof("Service %s disconnected", sid)
+func (this DefaultServiceManager) OnDisconnect(s Session, err error) error {
+	logger.Infof("Service %s disconnected", s.ID())
 	return nil
 }
 
-func (this DefaultServiceManager) OnMessage(sid string, data []byte) error {
+func (this DefaultServiceManager) OnMessage(s Session, data []byte) error {
 	logger.Infof("Service %s OnMessage", sid)
 	return nil
 }

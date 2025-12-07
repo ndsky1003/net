@@ -1,0 +1,52 @@
+package server
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/ndsky1003/net/conn"
+)
+
+// Session 定义了服务端会话的操作接口
+type Session interface {
+	// ID 获取当前会话 ID
+	ID() uuid.UUID
+
+	// SetID 设置当前会话 ID,由上游控制
+	SetID(newID uuid.UUID)
+
+	// Conn 获取底层连接 (用于发送消息等)
+	Conn() *conn.Conn
+
+	// Send 语法糖 (可选，方便用户直接回消息)
+	Send(ctx context.Context, data []byte) error
+}
+
+// sessionImpl 是原本 handler_helper 的升级版
+type default_Session struct {
+	sid  uuid.UUID
+	conn *conn.Conn
+	mgr  service_manager
+}
+
+func (s *default_Session) ID() uuid.UUID {
+	return s.sid
+}
+
+func (s *default_Session) SetID(newID uuid.UUID) {
+	s.sid = newID
+}
+
+func (s *default_Session) Conn() *conn.Conn {
+	return s.conn
+}
+
+func (s *default_Session) Send(ctx context.Context, data []byte) error {
+	return s.conn.Send(ctx, data)
+}
+
+// HandleMsg 实现 conn.Handler 接口
+func (s *default_Session) HandleMsg(data []byte) error {
+	// 直接把自己传给管理器，因为自己就是 Session
+	return s.mgr.OnMessage(s, data)
+}
