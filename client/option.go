@@ -3,6 +3,7 @@ package client
 import (
 	"time"
 
+	"github.com/ndsky1003/net/comm/ut"
 	"github.com/ndsky1003/net/conn"
 )
 
@@ -19,6 +20,13 @@ type Option struct {
 
 func Options() *Option {
 	return &Option{}
+}
+
+func (this *Option) WithConn(fn func(*conn.Option)) *Option {
+	if fn != nil {
+		fn(&this.Option)
+	}
+	return this
 }
 
 // WARN: 这个函数在conn.Serve之前,所以只能使用conn.Write\Read\Flush等基础方法
@@ -68,17 +76,9 @@ func (this *Option) merge(delta *Option) *Option {
 		return nil
 	}
 
-	if delta.ReconnectInterval != nil {
-		this.ReconnectInterval = delta.ReconnectInterval
-	}
-
-	if delta.VerifyTimeout != nil {
-		this.VerifyTimeout = delta.VerifyTimeout
-	}
-
-	if delta.Secret != nil {
-		this.Secret = delta.Secret
-	}
+	ut.ResolveOption(&this.ReconnectInterval, delta.ReconnectInterval)
+	ut.ResolveOption(&this.VerifyTimeout, delta.VerifyTimeout)
+	ut.ResolveOption(&this.Secret, delta.Secret)
 
 	if delta.Handler != nil {
 		this.Handler = delta.Handler
@@ -96,12 +96,11 @@ func (this *Option) merge(delta *Option) *Option {
 		this.OnAuthFailed = delta.OnAuthFailed
 	}
 
-	this.Option.Merge(&delta.Option)
-
+	this.Option = this.Option.Merge(&delta.Option)
 	return this
 }
 
-func (this *Option) Merge(opts ...*Option) *Option {
+func (this Option) Merge(opts ...*Option) Option {
 	for _, opt := range opts {
 		this.merge(opt)
 	}
@@ -127,67 +126,3 @@ type handler_func func([]byte) error
 func (f handler_func) HandleMsg(data []byte) error {
 	return f(data)
 }
-
-// NOTE: 重写的目的,是方便返回的是当前的Option,而不是conn.Option
-// ---------------------重写conn.Option的设置函数---------------------
-func (this *Option) SetReadTimeout(t time.Duration) *Option {
-	this.ReadTimeout = &t
-	return this
-}
-
-func (this *Option) SetWriteTimeout(t time.Duration) *Option {
-	this.WriteTimeout = &t
-	return this
-}
-
-func (this *Option) SetSendChanTimeout(t time.Duration) *Option {
-	this.SendChanTimeout = &t
-	return this
-}
-
-func (this *Option) SetTimeout(t time.Duration) *Option {
-	this.SetReadTimeout(t).SetWriteTimeout(t)
-	return this
-}
-
-func (this *Option) SetReadTimeoutFactor(t float64) *Option {
-	this.ReadTimeoutFactor = &t
-	return this
-}
-
-func (this *Option) SetHeartInterval(t time.Duration) *Option {
-	this.HeartInterval = &t
-	return this
-}
-
-func (this *Option) SetSendChanSize(t int) *Option {
-	this.SendChanSize = &t
-	return this
-}
-
-func (this *Option) SetOnCloseCallbackDiscardMsg(f func(data [][]byte)) *Option {
-	this.OnCloseCallbackDiscardMsg = f
-	return this
-}
-
-func (this *Option) SetReadBufferLimitSize(delta uint64) *Option {
-	this.ReadBufferLimitSize = &delta
-	return this
-}
-
-func (this *Option) SetReadBufferMinSize(size int) *Option {
-	this.ReadBufferMinSize = &size
-	return this
-}
-
-func (this *Option) SetReadBufferMaxSize(size int) *Option {
-	this.ReadBufferMaxSize = &size
-	return this
-}
-
-func (this *Option) SetShrinkThreshold(t int) *Option {
-	this.ShrinkThreshold = &t
-	return this
-}
-
-//---------------------重写conn.Option的设置函数---------------------

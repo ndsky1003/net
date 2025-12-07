@@ -86,7 +86,7 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		r:        bufio.NewReader(conn),
 		w:        bufio.NewWriter(conn),
 		handler:  handler,
-		opt:      opt,
+		opt:      &opt,
 		ctx:      ctx,
 		cancel:   cancel,
 		sendChan: make(chan *msg, *opt.SendChanSize),
@@ -102,7 +102,7 @@ func (this *Conn) write(flag byte, data []byte, opts ...*Option) (err error) {
 }
 
 func (this *Conn) writes(flag byte, datas [][]byte, opts ...*Option) (err error) {
-	opt := Options().SetWriteTimeout(*this.opt.WriteTimeout).Merge(opts...)
+	opt := this.opt.Merge(opts...)
 	length := 0
 	for _, data := range datas {
 		length += len(data)
@@ -149,7 +149,7 @@ func nextPowerOf2(n int, minCap int) int {
 
 // WARNING: 非线程安全，由 readPump 独占调用
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
-	opt := Options().Merge(this.opt).Merge(opts...)
+	opt := this.opt.Merge(opts...)
 	read_buf_limit_size := *opt.ReadBufferLimitSize
 
 	var deadline time.Time

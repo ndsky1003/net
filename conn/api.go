@@ -56,11 +56,11 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 		return fmt.Errorf("connection closed")
 	}
 
-	opt := Options().Merge(this.opt).Merge(opts...)
+	opt := this.opt.Merge(opts...)
 	msg := &msg{
 		flag: flag_msg,
 		data: data,
-		opt:  opt,
+		opt:  &opt,
 	}
 
 	if timeout := opt.SendChanTimeout; timeout != nil {

@@ -26,9 +26,10 @@ type server struct {
 
 func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
 	ctx, cancel := context.WithCancel(ctx)
+	opt := Options().SetVerifyTimeout(5 * time.Second).Merge(opts...)
 	return &server{
 		mgr:    mgr,
-		opt:    Options().SetVerifyTimeout(5 * time.Second).Merge(opts...),
+		opt:    &opt,
 		ctx:    ctx,
 		cancel: cancel,
 	}

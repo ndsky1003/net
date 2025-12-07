@@ -45,12 +45,13 @@ func Dial(ctx context.Context, name, url string, opts ...*Option) (c *Client, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate uuid: %w", err)
 	}
+	opt := Options().SetReconnectInterval(2 * time.Second).Merge(opts...)
 	ctx, cancel := context.WithCancel(ctx)
 	c = &Client{
 		version: ver,
 		name:    name,
 		url:     url,
-		opt:     Options().SetReconnectInterval(2 * time.Second).Merge(opts...),
+		opt:     &opt,
 		ctx:     ctx,
 		cancel:  cancel,
 	}
@@ -148,7 +149,7 @@ func (this *Client) Send(ctx context.Context, data []byte, opts ...*Option) erro
 	if conn == nil {
 		return errors.New("connection not established")
 	}
-	opt := Options().Merge(this.opt).Merge(opts...)
+	opt := this.opt.Merge(opts...)
 	return conn.Send(ctx, data, &opt.Option)
 }
 
@@ -157,7 +158,7 @@ func (this *Client) Sends(ctx context.Context, data [][]byte, opts ...*Option) e
 	if conn == nil {
 		return errors.New("connection not established")
 	}
-	opt := Options().Merge(this.opt).Merge(opts...)
+	opt := this.opt.Merge(opts...)
 	return conn.Sends(ctx, data, &opt.Option)
 }
 
