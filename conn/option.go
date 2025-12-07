@@ -98,6 +98,10 @@ func (this *Option) merge(delta *Option) *Option {
 	ut.ResolveOption(&this.ReadBufferMinSize, delta.ReadBufferMinSize)
 	ut.ResolveOption(&this.ReadBufferMaxSize, delta.ReadBufferMaxSize)
 	ut.ResolveOption(&this.ShrinkThreshold, delta.ShrinkThreshold)
+
+	if delta.OnCloseCallbackDiscardMsg != nil {
+		this.OnCloseCallbackDiscardMsg = delta.OnCloseCallbackDiscardMsg
+	}
 	return this
 }
 
