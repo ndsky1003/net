@@ -13,7 +13,7 @@ import (
 	"github.com/ndsky1003/net/logger"
 )
 
-type server struct {
+type Server struct {
 	mgr    service_manager
 	opt    *Option
 	ctx    context.Context
@@ -22,10 +22,10 @@ type server struct {
 	once   sync.Once
 }
 
-func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
+func New(ctx context.Context, mgr service_manager, opts ...*Option) *Server {
 	ctx, cancel := context.WithCancel(ctx)
 	opt := Options().SetVerifyTimeout(5 * time.Second).Merge(opts...)
-	return &server{
+	return &Server{
 		mgr:    mgr,
 		opt:    &opt,
 		ctx:    ctx,
@@ -33,7 +33,7 @@ func New(ctx context.Context, mgr service_manager, opts ...*Option) *server {
 	}
 }
 
-func (this *server) Listen(addrs ...string) (err error) {
+func (this *Server) Listen(addrs ...string) (err error) {
 	defer this.Close()
 	length := len(addrs)
 	listeners := make([]net.Listener, 0, length)
@@ -72,7 +72,7 @@ func (this *server) Listen(addrs ...string) (err error) {
 	}
 }
 
-func (this *server) listen(url string) (net.Listener, error) {
+func (this *Server) listen(url string) (net.Listener, error) {
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(this.ctx, "tcp", url)
 	if err != nil {
@@ -81,7 +81,7 @@ func (this *server) listen(url string) (net.Listener, error) {
 	return listener, nil
 }
 
-func (this *server) acceptListener(listener net.Listener) error {
+func (this *Server) acceptListener(listener net.Listener) error {
 	var tempDelay time.Duration // 临时错误重试延迟
 	for {
 		connRaw, err := listener.Accept()
@@ -135,7 +135,7 @@ const (
 	auth_fail_byte    = 0x00
 )
 
-func (this *server) handleConn(s Session, c *conn.Conn) (err error) {
+func (this *Server) handleConn(s Session, c *conn.Conn) (err error) {
 	defer this.wg.Done()
 	if this.opt.Secret != nil && *this.opt.Secret != "" {
 		opt := conn.Options()
@@ -167,7 +167,7 @@ func (this *server) handleConn(s Session, c *conn.Conn) (err error) {
 	return
 }
 
-func (this *server) Close() (err error) {
+func (this *Server) Close() (err error) {
 	this.once.Do(func() {
 		this.cancel()
 		this.wg.Wait()
