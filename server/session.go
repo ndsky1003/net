@@ -12,7 +12,7 @@ type Session interface {
 	// ID 获取当前会话 ID
 	ID() uuid.UUID
 
-	// SetID 设置当前会话 ID,由上游控制
+	// SetID 设置当前会话 ID,由上游控制,因为id有可能复用,有可能断线重连的时候,有可能需要设置相同id,而不是一致用最新分配的id
 	SetID(newID uuid.UUID)
 
 	// Conn 获取底层连接 (用于发送消息等)
