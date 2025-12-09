@@ -5,7 +5,7 @@ import (
 )
 
 // service_manager 服务管理策略接口
-type service_manager interface {
+type server_manager interface {
 
 	// OnConnect 当新服务连接时调用
 	OnConnect(Session) error
@@ -29,25 +29,25 @@ type service_manager interface {
 	Close() error
 }
 
-type DefaultServiceManager struct {
+type DefaultServerManager struct {
 }
 
-func (this DefaultServiceManager) OnConnect(s Session) error {
+func (this DefaultServerManager) OnConnect(s Session) error {
 	logger.Infof("Service %s connected", s.ID())
 	return nil
 }
 
-func (this DefaultServiceManager) OnDisconnect(s Session, err error) error {
+func (this DefaultServerManager) OnDisconnect(s Session, err error) error {
 	logger.Infof("Service %s disconnected", s.ID())
 	return nil
 }
 
-func (this DefaultServiceManager) OnMessage(s Session, data []byte) error {
+func (this DefaultServerManager) OnMessage(s Session, data []byte) error {
 	logger.Infof("Service %s OnMessage", s.ID())
 	return nil
 }
 
-func (this DefaultServiceManager) Close() error {
+func (this DefaultServerManager) Close() error {
 	logger.Info("Service Close")
 	return nil
 }

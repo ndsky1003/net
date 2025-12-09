@@ -19,14 +19,17 @@ type Session interface {
 	Conn() *conn.Conn
 
 	// Send 语法糖 (可选，方便用户直接回消息)
-	Send(ctx context.Context, data []byte) error
+	Send(ctx context.Context, data []byte, opts ...*Option) error
+
+	// Send 语法糖 (可选，方便用户直接回消息)
+	Sends(ctx context.Context, data [][]byte, opts ...*Option) error
 }
 
 // sessionImpl 是原本 handler_helper 的升级版
 type default_Session struct {
 	sid  uuid.UUID
 	conn *conn.Conn
-	mgr  service_manager
+	mgr  server_manager
 }
 
 func (s *default_Session) ID() uuid.UUID {
@@ -41,8 +44,14 @@ func (s *default_Session) Conn() *conn.Conn {
 	return s.conn
 }
 
-func (s *default_Session) Send(ctx context.Context, data []byte) error {
-	return s.conn.Send(ctx, data)
+func (s *default_Session) Send(ctx context.Context, data []byte, opts ...*Option) error {
+	opt := Options().Merge(opts...)
+	return s.conn.Send(ctx, data, &opt.Option)
+}
+
+func (s *default_Session) Sends(ctx context.Context, data [][]byte, opts ...*Option) error {
+	opt := Options().Merge(opts...)
+	return s.conn.Sends(ctx, data, &opt.Option)
 }
 
 // HandleMsg 实现 conn.Handler 接口

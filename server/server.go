@@ -14,7 +14,7 @@ import (
 )
 
 type Server struct {
-	mgr    service_manager
+	mgr    server_manager
 	opt    *Option
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -22,7 +22,7 @@ type Server struct {
 	once   sync.Once
 }
 
-func New(ctx context.Context, mgr service_manager, opts ...*Option) *Server {
+func New(ctx context.Context, mgr server_manager, opts ...*Option) *Server {
 	ctx, cancel := context.WithCancel(ctx)
 	opt := Options().SetVerifyTimeout(5 * time.Second).Merge(opts...)
 	return &Server{
