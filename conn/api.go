@@ -63,11 +63,15 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 		opt:  &opt,
 	}
 
+	// 优化：直接使用 Timer，而不是包装 Context
+	// 这样可以避免 Context 分配，且逻辑更清晰
+	var timeoutCh <-chan time.Time
 	if timeout := opt.SendChanTimeout; timeout != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *timeout)
-		defer cancel()
+		timer := time.NewTimer(*timeout)
+		defer timer.Stop()
+		timeoutCh = timer.C
 	}
+
 	select {
 	case <-this.ctx.Done():
 		return fmt.Errorf("connection closed")
@@ -76,6 +80,8 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 			return fmt.Errorf("send timeout")
 		}
 		return fmt.Errorf("send cancelled:%w", ctx.Err())
+	case <-timeoutCh:
+		return fmt.Errorf("send timeout")
 	case this.sendChan <- msg:
 	}
 	return nil
