@@ -43,12 +43,6 @@ type Handler interface {
 	HandleMsg(data []byte) error
 }
 
-type msg struct {
-	flag byte
-	data [][]byte
-	opt  *Option
-}
-
 type Conn struct {
 	net.Conn
 	r        io.Reader
@@ -274,11 +268,10 @@ func (this *Conn) ping() (err error) {
 }
 
 func (this *Conn) pong() error {
+	msg := msgPool.Get().(*msg)
+	msg.flag = flag_pong
 	select {
-	case this.sendChan <- &msg{
-		flag: flag_pong,
-		data: nil,
-	}:
+	case this.sendChan <- msg:
 	default:
 		// 如果发送缓冲区满，丢弃 PONG 是安全的，对方会在下一个周期重试 PING
 		// 或者对方发送业务数据时也会刷新活跃状态
@@ -309,8 +302,10 @@ func (this *Conn) writePump() (err error) {
 
 			// 发送数据（业务消息或 PONG）
 			if err = this.writes(msg.flag, msg.data, msg.opt); err != nil {
+				msg.Release()
 				return err
 			}
+			msg.Release()
 			// 2. 【关键策略】：检查通道里是否还有排队的数据？
 			// 如果还有，就继续循环去拿，暂不 Flush，为了拼成大包。
 			// 如果没有了，说明这波突发流量结束了，立刻 Flush 保证低延迟。

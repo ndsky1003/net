@@ -2,9 +2,15 @@ package conn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
+)
+
+var (
+	ErrConnectionClosed = errors.New("connection closed")
+	ErrSendBufferFull   = errors.New("send buffer full")
 )
 
 // WARNING: 非线程安全
@@ -57,11 +63,10 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 	}
 
 	opt := this.opt.Merge(opts...)
-	msg := &msg{
-		flag: flag_msg,
-		data: data,
-		opt:  &opt,
-	}
+	msg := msgPool.Get().(*msg)
+	msg.flag = flag_msg
+	msg.data = data
+	msg.opt = &opt
 
 	// 优化：直接使用 Timer，而不是包装 Context
 	// 这样可以避免 Context 分配，且逻辑更清晰
@@ -74,14 +79,16 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 
 	select {
 	case <-this.ctx.Done():
-		return fmt.Errorf("connection closed")
+		return ErrConnectionClosed
 	case <-ctx.Done():
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("send timeout")
+			// 这是业务层的总超时
+			return fmt.Errorf("context deadline exceeded: %w", ctx.Err())
 		}
-		return fmt.Errorf("send cancelled:%w", ctx.Err())
+		return fmt.Errorf("send cancelled: %w", ctx.Err())
+
 	case <-timeoutCh:
-		return fmt.Errorf("send timeout")
+		return ErrSendBufferFull
 	case this.sendChan <- msg:
 	}
 	return nil
@@ -146,6 +153,7 @@ func (this *Conn) Close() error {
 		var discardedMsgs [][][]byte
 		for msg := range this.sendChan {
 			discardedMsgs = append(discardedMsgs, msg.data)
+			msg.Release()
 		}
 		f(discardedMsgs)
 		this.opt.SetOnCloseCallbackDiscardMsg(nil) // 释放回调
