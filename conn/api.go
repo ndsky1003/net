@@ -66,7 +66,12 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 	msg := msgPool.Get().(*msg)
 	msg.flag = flag_msg
 	msg.data = data
-	msg.opt = &opt
+	if len(opts) > 0 {
+		val := this.opt.Merge(opts...)
+		msg.opt = &val // 只有这时才逃逸到堆
+	} else {
+		msg.opt = nil // 无额外选项，零分配
+	}
 
 	// 优化：直接使用 Timer，而不是包装 Context
 	// 这样可以避免 Context 分配，且逻辑更清晰

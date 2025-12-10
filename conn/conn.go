@@ -105,8 +105,10 @@ func (this *Conn) writes(flag byte, datas [][]byte, opts ...*Option) (err error)
 	n := binary.PutUvarint(size[:], uint64(length)+1)
 
 	var deadline time.Time
-	if opt.WriteTimeout != nil {
-		deadline = time.Now().Add(*opt.WriteTimeout)
+	if t := opt.WriteTimeout; t != nil {
+		if *t != 0 {
+			deadline = time.Now().Add(*t)
+		}
 	}
 
 	if err = this.Conn.SetWriteDeadline(deadline); err != nil {
@@ -147,8 +149,10 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	read_buf_limit_size := *opt.ReadBufferLimitSize
 
 	var deadline time.Time
-	if opt.ReadTimeout != nil {
-		deadline = time.Now().Add(*opt.ReadTimeout)
+	if t := opt.ReadTimeout; t != nil {
+		if *t != 0 {
+			deadline = time.Now().Add(*t)
+		}
 	}
 	if err = this.Conn.SetReadDeadline(deadline); err != nil {
 		return
