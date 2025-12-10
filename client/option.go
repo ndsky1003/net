@@ -8,14 +8,11 @@ import (
 )
 
 type Option struct {
-	Secret            *string
-	VerifyTimeout     *time.Duration
 	ReconnectInterval *time.Duration
 	conn.Handler
 	conn.Option
 	OnConnected    func(*conn.Conn) error // 这里有可能校验逻辑,返回所错误要跳出重连
 	OnDisconnected func(err error)
-	OnAuthFailed   func(err error)
 }
 
 func Options() *Option {
@@ -35,28 +32,13 @@ func (this *Option) SetOnConnected(f func(*conn.Conn) error) *Option {
 	return this
 }
 
-func (this *Option) SetVerifyTimeout(t time.Duration) *Option {
-	this.VerifyTimeout = &t
-	return this
-}
-
 func (this *Option) SetOnDisconnected(f func(err error)) *Option {
 	this.OnDisconnected = f
 	return this
 }
 
-func (this *Option) SetOnAuthFailed(f func(err error)) *Option {
-	this.OnAuthFailed = f
-	return this
-}
-
 func (this *Option) SetReconnectInterval(t time.Duration) *Option {
 	this.ReconnectInterval = &t
-	return this
-}
-
-func (this *Option) SetSecret(s string) *Option {
-	this.Secret = &s
 	return this
 }
 
@@ -77,8 +59,6 @@ func (this *Option) merge(delta *Option) *Option {
 	}
 
 	ut.ResolveOption(&this.ReconnectInterval, delta.ReconnectInterval)
-	ut.ResolveOption(&this.VerifyTimeout, delta.VerifyTimeout)
-	ut.ResolveOption(&this.Secret, delta.Secret)
 
 	if delta.Handler != nil {
 		this.Handler = delta.Handler
@@ -90,10 +70,6 @@ func (this *Option) merge(delta *Option) *Option {
 
 	if delta.OnDisconnected != nil {
 		this.OnDisconnected = delta.OnDisconnected
-	}
-
-	if delta.OnAuthFailed != nil {
-		this.OnAuthFailed = delta.OnAuthFailed
 	}
 
 	this.Option = this.Option.Merge(&delta.Option)

@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -11,15 +10,6 @@ import (
 
 	"github.com/ndsky1003/net/conn"
 	"github.com/ndsky1003/net/logger"
-)
-
-// 定义认证常量
-const (
-	auth_success_byte = 0x0C
-)
-
-var (
-	auth_failed_error = errors.New("authentication failed")
 )
 
 type Client struct {
@@ -97,11 +87,6 @@ func (this *Client) keepAlive() {
 }
 
 func (this *Client) getReconnectDelay(err error) time.Duration {
-	// 认证失败应该使用更长的延迟，避免快速重试
-	if isAuthError(err) {
-		return 5 * time.Second // 认证失败等待更久
-	}
-
 	// 网络错误使用配置的重连间隔
 	if isNetworkError(err) {
 		return *this.opt.ReconnectInterval
@@ -109,13 +94,6 @@ func (this *Client) getReconnectDelay(err error) time.Duration {
 
 	// 其他错误使用默认间隔
 	return *this.opt.ReconnectInterval
-}
-
-// 错误类型判断函数
-func isAuthError(err error) bool {
-	return err != nil &&
-		(errors.Is(err, auth_failed_error) || err.Error() == "authentication failed" ||
-			err.Error() == "verification failed")
 }
 
 func isNetworkError(err error) bool {
@@ -155,39 +133,7 @@ func (this *Client) Sends(ctx context.Context, data [][]byte, opts ...*Option) e
 	return conn.Sends(ctx, data, &opt.Option)
 }
 
-func (this *Client) verify(c *conn.Conn) (err error) {
-	if this.opt.Secret == nil || *this.opt.Secret == "" {
-		return
-	}
-	if err = c.Write([]byte(*this.opt.Secret)); err != nil {
-		return
-	}
-	opt := conn.Options()
-
-	if this.opt.VerifyTimeout != nil {
-		opt.SetReadTimeout(*this.opt.VerifyTimeout)
-	}
-
-	res, err := c.Read(opt)
-	if err != nil {
-		return fmt.Errorf("read auth response failed: %w", err)
-	}
-
-	if len(res) == 0 || res[0] != auth_success_byte {
-		return auth_failed_error
-	}
-
-	return nil
-}
-
 func (this *Client) serve(conn *conn.Conn) (err error) {
-	if err = this.verify(conn); err != nil {
-		if this.opt.OnAuthFailed != nil {
-			this.opt.OnAuthFailed(err)
-		}
-		conn.Close()
-		return
-	}
 	if this.opt.OnConnected != nil {
 		if err = this.opt.OnConnected(conn); err != nil {
 			conn.Close()

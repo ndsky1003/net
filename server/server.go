@@ -24,7 +24,7 @@ type Server struct {
 
 func New(ctx context.Context, mgr server_manager, opts ...*Option) *Server {
 	ctx, cancel := context.WithCancel(ctx)
-	opt := Options().SetVerifyTimeout(5 * time.Second).Merge(opts...)
+	opt := Options().Merge(opts...)
 	return &Server{
 		mgr:    mgr,
 		opt:    &opt,
@@ -129,31 +129,8 @@ func (this *Server) acceptListener(listener net.Listener) error {
 	}
 }
 
-// 定义认证常量
-const (
-	auth_success_byte = 0x0C
-	auth_fail_byte    = 0x00
-)
-
 func (this *Server) handleConn(s Session, c *conn.Conn) (err error) {
 	defer this.wg.Done()
-	if this.opt.Secret != nil && *this.opt.Secret != "" {
-		opt := conn.Options()
-		if this.opt.VerifyTimeout != nil {
-			opt.SetReadTimeout(*this.opt.VerifyTimeout)
-		}
-		if res, err := c.Read(opt); err != nil {
-			return fmt.Errorf("read auth failed: %w", err)
-		} else if string(res) != *this.opt.Secret {
-			if writeErr := c.Write([]byte{auth_fail_byte}); writeErr != nil {
-				logger.Infof("failed to notify client of auth failure sid:%v  err: %v", s.ID(), writeErr)
-			}
-			return errors.New("authentication failed")
-		}
-		if err = c.Write([]byte{auth_success_byte}); err != nil {
-			return
-		}
-	}
 	err = this.mgr.OnConnect(s)
 	if err != nil {
 		c.Close()
