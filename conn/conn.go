@@ -273,6 +273,7 @@ func (this *Conn) pong() error {
 	select {
 	case this.sendChan <- msg:
 	default:
+		msg.Release()
 		// 如果发送缓冲区满，丢弃 PONG 是安全的，对方会在下一个周期重试 PING
 		// 或者对方发送业务数据时也会刷新活跃状态
 		return fmt.Errorf("send pong buffer full")

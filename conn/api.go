@@ -79,8 +79,10 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 
 	select {
 	case <-this.ctx.Done():
+		msg.Release()
 		return ErrConnectionClosed
 	case <-ctx.Done():
+		msg.Release()
 		if ctx.Err() == context.DeadlineExceeded {
 			// 这是业务层的总超时
 			return fmt.Errorf("context deadline exceeded: %w", ctx.Err())
@@ -88,10 +90,11 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 		return fmt.Errorf("send cancelled: %w", ctx.Err())
 
 	case <-timeoutCh:
+		msg.Release()
 		return ErrSendBufferFull
 	case this.sendChan <- msg:
+		return nil
 	}
-	return nil
 }
 
 func (this *Conn) Serve() error {
@@ -149,14 +152,30 @@ func (this *Conn) Close() error {
 	this.Conn.SetReadDeadline(time.Now()) // 中断阻塞的读操作
 	this.Conn.Close()
 
-	if f := this.opt.OnCloseCallbackDiscardMsg; f != nil {
+	if len(this.sendChan) > 0 {
+		// 提取回调函数，避免在循环里多次判断
+		callback := this.opt.OnCloseCallbackDiscardMsg
 		var discardedMsgs [][][]byte
-		for msg := range this.sendChan {
-			discardedMsgs = append(discardedMsgs, msg.data)
-			msg.Release()
+
+		// 循环抽干
+		for {
+			select {
+			case msg := <-this.sendChan:
+				if callback != nil {
+					discardedMsgs = append(discardedMsgs, msg.data)
+				}
+				msg.Release() // 必须回收！
+			default:
+				// 通道空了，退出循环
+				goto DRAINED
+			}
 		}
-		f(discardedMsgs)
-		this.opt.SetOnCloseCallbackDiscardMsg(nil) // 释放回调
+
+	DRAINED:
+		if callback != nil && len(discardedMsgs) > 0 {
+			callback(discardedMsgs)
+		}
+		this.opt.SetOnCloseCallbackDiscardMsg(nil)
 	}
 
 	this.l.Lock()
