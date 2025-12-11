@@ -59,26 +59,34 @@ func (this *Conn) Send(ctx context.Context, data []byte, opts ...*Option) (err e
 // WARNING: 线程安全
 func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (err error) {
 	if this.closed.Load() {
-		return fmt.Errorf("connection closed")
+		return ErrConnectionClosed
 	}
-
-	opt := this.opt.Merge(opts...)
 	msg := msgPool.Get().(*msg)
 	msg.flag = flag_msg
 	msg.data = data
+	var timeoutPtr *time.Duration
 	if len(opts) > 0 {
 		val := this.opt.Merge(opts...)
 		msg.opt = &val // 只有这时才逃逸到堆
+		timeoutPtr = val.SendChanTimeout
 	} else {
-		msg.opt = nil // 无额外选项，零分配
+		msg.opt = nil
+		timeoutPtr = this.opt.SendChanTimeout
 	}
 
-	var timeoutCh <-chan time.Time
-	if timeout := opt.SendChanTimeout; timeout != nil && *timeout > 0 {
-		timer := time.NewTimer(*timeout)
-		defer timer.Stop()
-		timeoutCh = timer.C
+	select {
+	case this.sendChan <- msg:
+		return nil
+	default:
 	}
+
+	if timeoutPtr == nil || *timeoutPtr <= 0 {
+		msg.Release()
+		return ErrSendBufferFull
+	}
+
+	timer := time.NewTimer(*timeoutPtr)
+	defer timer.Stop()
 
 	select {
 	case <-this.ctx.Done():
@@ -91,7 +99,7 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 			return fmt.Errorf("context deadline exceeded: %w", ctx.Err())
 		}
 		return fmt.Errorf("send cancelled: %w", ctx.Err())
-	case <-timeoutCh:
+	case <-timer.C:
 		msg.Release()
 		return ErrSendBufferFull
 	case this.sendChan <- msg:

@@ -65,15 +65,27 @@ type Conn struct {
 
 func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *Conn {
 	opt := Options().
-		SetTimeout(10 * time.Second).
+		SetReadTimeout(5 * time.Second).
+		SetWriteTimeout(5 * time.Second).
 		SetReadTimeoutFactor(2.2).
 		SetHeartInterval(5 * time.Second).
-		SetSendChanSize(100).
+		SetSendChanSize(1024).
 		SetReadBufferLimitSize(100 * 1024 * 1024). //100M
 		SetReadBufferMaxSize(64 * 1024).           //64k
 		SetReadBufferMinSize(4 * 1024).            //4k
 		SetShrinkThreshold(50).                    //50
+		SetSendChanTimeout(5 * time.Second).
 		Merge(opts...)
+
+	if *opt.ReadBufferMinSize > *opt.ReadBufferMaxSize {
+		*opt.ReadBufferMinSize = *opt.ReadBufferMaxSize
+	}
+
+	if opt.ReadTimeout == nil || *opt.ReadTimeout == 0 {
+		timeout := time.Duration(float64(*opt.HeartInterval) * *opt.ReadTimeoutFactor)
+		opt.ReadTimeout = &timeout
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	c := &Conn{
 		Conn:     conn,
@@ -150,7 +162,7 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 
 	var deadline time.Time
 	if t := opt.ReadTimeout; t != nil {
-		if *t != 0 {
+		if *t > 0 {
 			deadline = time.Now().Add(*t)
 		}
 	}

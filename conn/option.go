@@ -12,10 +12,10 @@ func Options() *Option {
 }
 
 type Option struct {
-	ReadTimeout               *time.Duration
-	ReadTimeoutFactor         *float64 // 读超时倍数因子，默认2.2
+	ReadTimeout               *time.Duration //仅限于握手阶段的超时
+	ReadTimeoutFactor         *float64       // 读超时倍数因子，默认2.2
 	WriteTimeout              *time.Duration
-	SendChanTimeout           *time.Duration //不设置满了就会丢掉
+	SendChanTimeout           *time.Duration //当设置值小于或者等于0的时候会在满buff的时候自动丢弃
 	HeartInterval             *time.Duration
 	SendChanSize              *int
 	OnCloseCallbackDiscardMsg func(data [][][]byte) //分线的数据包,并没有再次合起来{header,meta,body}
@@ -53,10 +53,6 @@ func (this *Option) SetShrinkThreshold(t int) *Option {
 func (this *Option) SetReadTimeoutFactor(t float64) *Option {
 	this.ReadTimeoutFactor = &t
 	return this
-}
-
-func (this *Option) SetTimeout(t time.Duration) *Option {
-	return this.SetReadTimeout(t).SetWriteTimeout(t)
 }
 
 func (this *Option) SetWriteTimeout(t time.Duration) *Option {
