@@ -73,10 +73,8 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 		msg.opt = nil // 无额外选项，零分配
 	}
 
-	// 优化：直接使用 Timer，而不是包装 Context
-	// 这样可以避免 Context 分配，且逻辑更清晰
 	var timeoutCh <-chan time.Time
-	if timeout := opt.SendChanTimeout; timeout != nil {
+	if timeout := opt.SendChanTimeout; timeout != nil && *timeout > 0 {
 		timer := time.NewTimer(*timeout)
 		defer timer.Stop()
 		timeoutCh = timer.C
@@ -93,7 +91,6 @@ func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (er
 			return fmt.Errorf("context deadline exceeded: %w", ctx.Err())
 		}
 		return fmt.Errorf("send cancelled: %w", ctx.Err())
-
 	case <-timeoutCh:
 		msg.Release()
 		return ErrSendBufferFull
