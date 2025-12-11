@@ -3,6 +3,8 @@ package client
 import (
 	"context"
 	"errors"
+	"math"
+	"math/rand/v2"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -29,7 +31,10 @@ func Dial(ctx context.Context, name, url string, opts ...*Option) (c *Client, er
 	if url == "" {
 		return nil, errors.New("client Dail url is empty")
 	}
-	opt := Options().SetReconnectInterval(2 * time.Second).Merge(opts...)
+	opt := Options().
+		SetBaseReconnectInterval(2 * time.Second).
+		SetMaxReconnectInterval(60 * time.Second).
+		Merge(opts...)
 	ctx, cancel := context.WithCancel(ctx)
 	c = &Client{
 		name:   name,
@@ -48,59 +53,85 @@ func (this *Client) keepAlive() {
 	dialer := &net.Dialer{
 		Timeout: 5 * time.Second,
 	}
+
+	var attempts int
+
 	for {
 		select {
 		case <-this.ctx.Done():
 			return
 		default:
 		}
+
 		conn_raw, err := dialer.DialContext(this.ctx, "tcp", this.url)
 		if err != nil {
-			logger.Errorf("keepAlive err:%v", err)
+			attempts++
+
 			// 如果是因为 context canceled 导致的错误，直接退出
 			if errors.Is(err, context.Canceled) {
 				return
 			}
+
+			delay := this.getReconnectDelay(err, attempts)
+			logger.Errorf("keepAlive dial err: %v, retry in %v (attempt %d)", err, delay, attempts)
+
 			select {
-			case <-time.After(*this.opt.ReconnectInterval):
+			case <-time.After(delay):
 			case <-this.ctx.Done():
 				return
 			}
 			continue
 		}
+
+		//NOTE:如果想防止“连上立刻断”的抖动，可以在 serve 正常运行一段时间后再重置
+		attempts = 0
+
 		conn := conn.New(this.ctx, conn_raw, this.opt.GetHandler(), &this.opt.Option)
 
+		// 阻塞运行直到断开...
 		err = this.serve(conn)
+
 		if this.opt.OnDisconnected != nil {
 			this.opt.OnDisconnected(err)
 		}
 		if err != nil {
-			logger.Errorf("keepAlive server:%v", err)
+			logger.Errorf("keepAlive server disconnected: %v", err)
 		}
-		delay := this.getReconnectDelay(err)
+
+		// 服务断开，这也算是一种需要“重连”的状态
+		// 我们可以把 attempts 设为 1，避免立即无间隔重连
+		attempts++
+
+		delay := this.getReconnectDelay(err, attempts)
 		select {
-		case <-time.After(delay): //防止连上就断开，再继续连接
+		case <-time.After(delay):
 		case <-this.ctx.Done():
 			return
 		}
 	}
 }
 
-func (this *Client) getReconnectDelay(err error) time.Duration {
-	// 网络错误使用配置的重连间隔
-	if isNetworkError(err) {
-		return *this.opt.ReconnectInterval
+func (this *Client) getReconnectDelay(_ error, attempts int) time.Duration {
+	base := *this.opt.BaseReconnectInterval
+	maxDelay := *this.opt.MaxReconnectInterval
+	if base <= 0 {
+		base = 2 * time.Second
+	}
+	if attempts > 20 {
+		attempts = 20
+	}
+	backoff := float64(base) * math.Pow(2, float64(attempts-1))
+
+	// 5. 截断到上限
+	if backoff > float64(maxDelay) {
+		backoff = float64(maxDelay)
 	}
 
-	// 其他错误使用默认间隔
-	return *this.opt.ReconnectInterval
-}
-
-func isNetworkError(err error) bool {
-	// 根据实际错误类型判断
-	return err != nil &&
-		(err.Error() == "connection refused" ||
-			err.Error() == "network is unreachable")
+	if backoff > float64(base) {
+		randomFactor := rand.Float64()
+		backoff = float64(base) + randomFactor*(backoff-float64(base))
+	}
+	return time.Duration(backoff)
 }
 
 func (this *Client) setConn(newConn *conn.Conn) {

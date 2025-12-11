@@ -69,12 +69,12 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		SetWriteTimeout(5 * time.Second).
 		SetReadTimeoutFactor(2.2).
 		SetHeartInterval(5 * time.Second).
+		SetSendChanTimeout(5 * time.Second).
 		SetSendChanSize(1024).
 		SetReadBufferLimitSize(100 * 1024 * 1024). //100M
 		SetReadBufferMaxSize(64 * 1024).           //64k
 		SetReadBufferMinSize(4 * 1024).            //4k
 		SetShrinkThreshold(50).                    //50
-		SetSendChanTimeout(5 * time.Second).
 		Merge(opts...)
 
 	if *opt.ReadBufferMinSize > *opt.ReadBufferMaxSize {

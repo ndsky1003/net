@@ -8,7 +8,8 @@ import (
 )
 
 type Option struct {
-	ReconnectInterval *time.Duration
+	BaseReconnectInterval *time.Duration
+	MaxReconnectInterval  *time.Duration
 	conn.Handler
 	conn.Option
 	OnConnected    func(*conn.Conn) error // 这里有可能校验逻辑,返回所错误要跳出重连
@@ -37,8 +38,13 @@ func (this *Option) SetOnDisconnected(f func(err error)) *Option {
 	return this
 }
 
-func (this *Option) SetReconnectInterval(t time.Duration) *Option {
-	this.ReconnectInterval = &t
+func (this *Option) SetBaseReconnectInterval(t time.Duration) *Option {
+	this.BaseReconnectInterval = &t
+	return this
+}
+
+func (this *Option) SetMaxReconnectInterval(t time.Duration) *Option {
+	this.MaxReconnectInterval = &t
 	return this
 }
 
@@ -58,7 +64,8 @@ func (this *Option) merge(delta *Option) *Option {
 		return nil
 	}
 
-	ut.ResolveOption(&this.ReconnectInterval, delta.ReconnectInterval)
+	ut.ResolveOption(&this.BaseReconnectInterval, delta.BaseReconnectInterval)
+	ut.ResolveOption(&this.MaxReconnectInterval, delta.MaxReconnectInterval)
 
 	if delta.Handler != nil {
 		this.Handler = delta.Handler
