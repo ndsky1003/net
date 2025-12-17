@@ -1,7 +1,11 @@
 package net
 
-import "github.com/ndsky1003/net/logger"
+import (
+	"log/slog"
 
-func SetGlobalLogger(l logger.Logger) {
-	logger.SetGlobalLogger(l)
+	"github.com/ndsky1003/net/log"
+)
+
+func SetLogger(l *slog.Logger) {
+	log.SetLogger(l)
 }
