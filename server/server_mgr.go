@@ -1,7 +1,7 @@
 package server
 
 import (
-	"github.com/ndsky1003/net/logger"
+	"log/slog"
 )
 
 // service_manager 服务管理策略接口
@@ -33,21 +33,21 @@ type DefaultServerManager struct {
 }
 
 func (this DefaultServerManager) OnConnect(s Session) error {
-	logger.Infof("Service %s connected", s.ID())
+	slog.Info("DefaultServerManager OnConnect", "ID", s.ID())
 	return nil
 }
 
 func (this DefaultServerManager) OnDisconnect(s Session, err error) error {
-	logger.Infof("Service %s disconnected", s.ID())
+	slog.Info("DefaultServerManager OnDisconnect", "ID", s.ID(), "error", err)
 	return nil
 }
 
 func (this DefaultServerManager) OnMessage(s Session, data []byte) error {
-	logger.Infof("Service %s OnMessage", s.ID())
+	slog.Info("DefaultServerManager OnMessage", "ID", s.ID(), "data_len", len(data))
 	return nil
 }
 
 func (this DefaultServerManager) Close() error {
-	logger.Info("Service Close")
+	slog.Info("DefaultServerManager Close")
 	return nil
 }

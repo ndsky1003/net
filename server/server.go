@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ndsky1003/net/conn"
-	"github.com/ndsky1003/net/logger"
 )
 
 type Server struct {
@@ -108,7 +108,7 @@ func (this *Server) acceptListener(listener net.Listener) error {
 				tempDelay = 1 * time.Second
 			}
 
-			logger.Infof("Accept error: %v; retrying in %v", err, tempDelay)
+			slog.Error("Accept ", "error", err, "retrying in", tempDelay)
 			time.Sleep(tempDelay)
 			continue
 		}

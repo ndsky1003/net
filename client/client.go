@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"math/rand/v2"
 	"net"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/ndsky1003/net/conn"
-	"github.com/ndsky1003/net/logger"
 )
 
 type Client struct {
@@ -73,7 +73,7 @@ func (this *Client) keepAlive() {
 			}
 
 			delay := this.getReconnectDelay(err, attempts)
-			logger.Errorf("keepAlive dial err: %v, retry in %v (attempt %d)", err, delay, attempts)
+			slog.Error("keepAlive dial", "err", err, "delay", delay, "attempt", attempts)
 
 			select {
 			case <-time.After(delay):
@@ -95,7 +95,7 @@ func (this *Client) keepAlive() {
 			this.opt.OnDisconnected(err)
 		}
 		if err != nil {
-			logger.Errorf("keepAlive server disconnected: %v", err)
+			slog.Error("keepAlive server disconnected", "err", err)
 		}
 
 		// 服务断开，这也算是一种需要“重连”的状态

@@ -6,12 +6,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/ndsky1003/net/logger"
 )
 
 const (
@@ -380,11 +379,11 @@ func (this *Conn) readPump() error {
 				func() {
 					defer func() {
 						if r := recover(); r != nil {
-							logger.Infof("handler panic: %v", r)
+							slog.Error("handler panic", "err", r)
 						}
 					}()
 					if err := this.handler.HandleMsg(body); err != nil {
-						logger.Infof("handle msg error: %v", err)
+						slog.Error("handler msg ", "err", err)
 					}
 				}()
 			}
