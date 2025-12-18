@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,31 +21,13 @@ const (
 )
 
 type Handler interface {
-	//WARN: HandleMsg 处理接收到的消息。
-	//--------------
-	// ⚠️ 警告 (MEMORY UNSAFE):
-	// 传入的 data 切片直接引用连接内部的共享缓冲区 (readBuf)。
-	// 该数据仅在 HandleMsg 函数同步执行期间有效！
-	//--------------
-	// ✅ 安全做法 (同步处理):
-	//    1. 直接解析: json.Unmarshal(data, &obj)
-	//    2. 路由分发: router.Dispatch(data)
-	//--------------
-	// ❌ 危险做法 (异步/持有):
-	//    1. go func() { process(data) } // data 会被后续网络包覆盖，变脏数据
-	//    2. msgChan <- data             // 同上
-	//    3. globalCache = data          // 同上
-	//--------------
-	// 💡 如需异步处理，必须手动拷贝:
-	//    clone := make([]byte, len(data))
-	//    copy(clone, data)
-	//    go process(clone)
 	HandleMsg(data []byte) error
 }
 
 type Conn struct {
 	net.Conn
-	r        io.Reader
+	// r        io.Reader
+	r        *bufio.Reader
 	w        *bufio.Writer
 	sendChan chan *msg
 	handler  Handler
@@ -54,15 +37,11 @@ type Conn struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// readBuf 用于复用读取内存，避免反复 make ,避免gc的碎片化问题
-	readBuf     []byte
-	shrinkCount int
-
 	l        sync.Mutex // protect closeErr
 	closeErr error
 }
 
-func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *Conn {
+func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) (*Conn, error) {
 	opt := Options().
 		SetReadTimeout(5 * time.Second).
 		SetWriteTimeout(5 * time.Second).
@@ -71,18 +50,15 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		SetSendChanTimeout(5 * time.Second).
 		SetSendChanSize(1024).
 		SetReadBufferLimitSize(100 * 1024 * 1024). //100M
-		SetReadBufferMaxSize(64 * 1024).           //64k
-		SetReadBufferMinSize(4 * 1024).            //4k
-		SetShrinkThreshold(50).                    //50
 		Merge(opts...)
-
-	if *opt.ReadBufferMinSize > *opt.ReadBufferMaxSize {
-		*opt.ReadBufferMinSize = *opt.ReadBufferMaxSize
-	}
 
 	if opt.ReadTimeout == nil || *opt.ReadTimeout == 0 {
 		timeout := time.Duration(float64(*opt.HeartInterval) * *opt.ReadTimeoutFactor)
 		opt.ReadTimeout = &timeout
+	}
+
+	if opt.GenBufFn == nil {
+		return nil, errors.New("GenBufFn is nil")
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -95,10 +71,9 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		ctx:      ctx,
 		cancel:   cancel,
 		sendChan: make(chan *msg, *opt.SendChanSize),
-		readBuf:  make([]byte, 0, *opt.ReadBufferMinSize),
 	}
 	c.closed.Store(false)
-	return c
+	return c, nil
 }
 
 // WARNING: 非线程安全，由 writePump 独占调用
@@ -169,7 +144,7 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 		return
 	}
 
-	size, err := binary.ReadUvarint(this.r.(io.ByteReader))
+	size, err := binary.ReadUvarint(this.r)
 	if err != nil {
 		return
 	}
@@ -184,87 +159,23 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 		return
 	}
 
-	// ================== 梯子型内存管理 START ==================
-
-	currentCap := cap(this.readBuf)
-	minCap := *opt.ReadBufferMinSize
-	maxCap := *opt.ReadBufferMaxSize
-	shrinkThreshold := *opt.ShrinkThreshold
-
-	// 1. 判断是否属于突发超大流量 (> 64KB)
-	// 这种包不走梯子，直接临时分配，用完即毁，不污染 readBuf
-	if size > uint64(maxCap) {
-		// 临时分配，不修改 this.readBuf
-		tempBuf := make([]byte, size)
-		if _, err = io.ReadFull(this.r, tempBuf); err != nil {
-			return
-		}
-		flag = tempBuf[0]
-		data = tempBuf[1:]
+	flag, err = this.r.ReadByte()
+	if err != nil {
+		return
+	}
+	if opt.GenBufFn == nil {
+		err = fmt.Errorf("GenBufFn is nil")
 		return
 	}
 
-	// 计算当前 size 所需的“目标台阶”
-	targetCap := nextPowerOf2(int(size), *opt.ReadBufferMinSize) // 例如 size=5000 -> targetCap=8192
+	size -= 1 // 减去 flag 的 1 字节
 
-	if currentCap >= targetCap {
-		// --- 情况 A：容量够用 ---
+	data = opt.GenBufFn()
 
-		// 尝试触发【缩容逻辑】（下梯子）
-		// 只有当：
-		// 1. 当前容量比目标容量大很多（例如当前 64K，实际只需要 4K）
-		// 2. 且 连续 N 次都只需要这么小
-		// 我们才进行缩容。
-		// 这里判定标准是：currentCap > targetCap * 2 (即利用率低于 50% 甚至更低时考虑)
-		if currentCap > targetCap && currentCap > minCap {
-			// 如果当前容量是目标容量的 4 倍以上（利用率 < 25%），我们记一次数
-			if currentCap >= targetCap*4 {
-				this.shrinkCount++
-
-				// 只有连续 50 次都这么小，才真的缩容
-				if this.shrinkCount > shrinkThreshold {
-					// 缩容动作：容量减半（温和缩容），或者直接缩到 targetCap
-					// 这里建议直接缩到 targetCap，或者 targetCap * 2 留点余地
-					// 工业界通常做法：新建一个小的，把原来的丢给 GC
-					newCap := targetCap * 2 // 留一点余量防止马上又反弹
-					if newCap < currentCap {
-						this.readBuf = make([]byte, newCap)
-					}
-					this.shrinkCount = 0 // 重置计数
-				}
-			} else {
-				// 利用率还行，或者偶尔大包，重置计数器
-				this.shrinkCount = 0
-			}
-		} else {
-			// 容量合适，重置缩容计数
-			this.shrinkCount = 0
-		}
-
-		// 复用内存
-		this.readBuf = this.readBuf[:size]
-
-	} else {
-		// --- 情况 B：容量不够，需要扩容（上梯子）---
-
-		// 直接扩容到目标台阶，而不是只扩容到 size
-		// 例如：当前 4K，来了 5K 的包 -> 直接扩容到 8K
-		this.readBuf = make([]byte, targetCap)
-		this.readBuf = this.readBuf[:size]
-
-		// 扩容后，清空缩容计数
-		this.shrinkCount = 0
+	if uint64(cap(data)) < size {
+		data = make([]byte, size)
 	}
-
-	// ================== 梯子型内存管理 END ==================
-
-	// 读取数据
-	if _, err = io.ReadFull(this.r, this.readBuf); err != nil {
-		return
-	}
-
-	flag = this.readBuf[0]
-	data = this.readBuf[1:]
+	_, err = io.ReadFull(this.r, data)
 	return
 }
 

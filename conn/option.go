@@ -4,7 +4,7 @@ package conn
 import (
 	"time"
 
-	"github.com/ndsky1003/net/comm/ut"
+	"github.com/ndsky1003/net/v2/comm/ut"
 )
 
 func Options() *Option {
@@ -20,9 +20,7 @@ type Option struct {
 	SendChanSize              *int
 	OnCloseCallbackDiscardMsg func(data [][][]byte) //分线的数据包,并没有再次合起来{header,meta,body}
 	ReadBufferLimitSize       *uint64               // 最大支持读取缓冲区大小,防止内存被撑爆 default 100M
-	ReadBufferMinSize         *int                  // 读取缓冲区大小,最小值,用于动态扩容 default 4k
-	ReadBufferMaxSize         *int                  // 读取缓冲区大小,最大值,用于动态扩容 default 64k
-	ShrinkThreshold           *int                  // 读取缓冲区缩容阈值 ,default 50
+	GenBufFn                  func() []byte         // 生成读取缓冲区函数
 }
 
 func (this *Option) SetReadTimeout(t time.Duration) *Option {
@@ -32,21 +30,6 @@ func (this *Option) SetReadTimeout(t time.Duration) *Option {
 
 func (this *Option) SetReadBufferLimitSize(delta uint64) *Option {
 	this.ReadBufferLimitSize = &delta
-	return this
-}
-
-func (this *Option) SetReadBufferMinSize(size int) *Option {
-	this.ReadBufferMinSize = &size
-	return this
-}
-
-func (this *Option) SetReadBufferMaxSize(size int) *Option {
-	this.ReadBufferMaxSize = &size
-	return this
-}
-
-func (this *Option) SetShrinkThreshold(t int) *Option {
-	this.ShrinkThreshold = &t
 	return this
 }
 
@@ -80,6 +63,11 @@ func (this *Option) SetOnCloseCallbackDiscardMsg(f func(data [][][]byte)) *Optio
 	return this
 }
 
+func (this *Option) SetGenBufFn(f func() []byte) *Option {
+	this.GenBufFn = f
+	return this
+}
+
 func (this *Option) merge(delta *Option) *Option {
 	if this == nil || delta == nil {
 		return nil
@@ -91,12 +79,12 @@ func (this *Option) merge(delta *Option) *Option {
 	ut.ResolveOption(&this.SendChanSize, delta.SendChanSize)
 	ut.ResolveOption(&this.ReadTimeoutFactor, delta.ReadTimeoutFactor)
 	ut.ResolveOption(&this.ReadBufferLimitSize, delta.ReadBufferLimitSize)
-	ut.ResolveOption(&this.ReadBufferMinSize, delta.ReadBufferMinSize)
-	ut.ResolveOption(&this.ReadBufferMaxSize, delta.ReadBufferMaxSize)
-	ut.ResolveOption(&this.ShrinkThreshold, delta.ShrinkThreshold)
 
 	if delta.OnCloseCallbackDiscardMsg != nil {
 		this.OnCloseCallbackDiscardMsg = delta.OnCloseCallbackDiscardMsg
+	}
+	if delta.GenBufFn != nil {
+		this.GenBufFn = delta.GenBufFn
 	}
 	return this
 }

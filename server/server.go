@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/v2/conn"
 )
 
 type Server struct {
@@ -122,7 +122,12 @@ func (this *Server) acceptListener(listener net.Listener) error {
 			sid: sid,
 			mgr: this.mgr,
 		}
-		conn := conn.New(this.ctx, connRaw, session, &this.opt.Option)
+		conn, err := conn.New(this.ctx, connRaw, session, &this.opt.Option)
+		if err != nil {
+			slog.Error("new conn", "err", err)
+			connRaw.Close()
+			continue
+		}
 		session.conn = conn
 		this.wg.Add(1)
 		go this.handleConn(session, conn)

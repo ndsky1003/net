@@ -3,8 +3,8 @@ package client
 import (
 	"time"
 
-	"github.com/ndsky1003/net/comm/ut"
-	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/v2/comm/ut"
+	"github.com/ndsky1003/net/v2/conn"
 )
 
 type Option struct {

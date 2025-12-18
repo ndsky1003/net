@@ -1,4 +1,4 @@
-module github.com/ndsky1003/net
+module github.com/ndsky1003/net/v2
 
 go 1.23
 

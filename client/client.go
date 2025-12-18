@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/v2/conn"
 )
 
 type Client struct {
@@ -86,7 +86,12 @@ func (this *Client) keepAlive() {
 		//NOTE:如果想防止“连上立刻断”的抖动，可以在 serve 正常运行一段时间后再重置
 		attempts = 0
 
-		conn := conn.New(this.ctx, conn_raw, this.opt.GetHandler(), &this.opt.Option)
+		conn, err := conn.New(this.ctx, conn_raw, this.opt.GetHandler(), &this.opt.Option)
+		if err != nil {
+			slog.Error("keepAlive new conn", "err", err)
+			conn_raw.Close()
+			continue
+		}
 
 		// 阻塞运行直到断开...
 		err = this.serve(conn)

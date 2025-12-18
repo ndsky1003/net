@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/v2/conn"
 )
 
 // Session 定义了服务端会话的操作接口

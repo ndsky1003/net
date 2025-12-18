@@ -1,7 +1,7 @@
 package server
 
 import (
-	"github.com/ndsky1003/net/conn"
+	"github.com/ndsky1003/net/v2/conn"
 )
 
 type Option struct {
