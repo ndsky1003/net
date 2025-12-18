@@ -117,18 +117,6 @@ func (this *Conn) writes(flag byte, datas [][]byte, opts ...*Option) (err error)
 	return
 }
 
-// 计算下一个梯子容量（2的幂次方，且 >= n）
-func nextPowerOf2(n int, minCap int) int {
-	if n <= minCap {
-		return minCap
-	}
-	cap := minCap
-	for cap < n {
-		cap <<= 1 // 乘以 2：4K -> 8K -> 16K -> 32K ...
-	}
-	return cap
-}
-
 // WARNING: 非线程安全，由 readPump 独占调用
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := this.opt.Merge(opts...)
