@@ -120,8 +120,11 @@ func (this *Conn) writes(flag byte, datas [][]byte, opts ...*Option) (err error)
 // WARNING: 非线程安全，由 readPump 独占调用
 func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	opt := this.opt.Merge(opts...)
+	if opt.GenBufFn == nil {
+		err = fmt.Errorf("GenBufFn is nil")
+		return
+	}
 	read_buf_limit_size := *opt.ReadBufferLimitSize
-
 	var deadline time.Time
 	if t := opt.ReadTimeout; t != nil {
 		if *t > 0 {
@@ -151,18 +154,14 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	if err != nil {
 		return
 	}
-	if opt.GenBufFn == nil {
-		err = fmt.Errorf("GenBufFn is nil")
-		return
-	}
 
 	size -= 1 // 减去 flag 的 1 字节
 
 	data = opt.GenBufFn()
-
 	if uint64(cap(data)) < size {
 		data = make([]byte, size)
 	}
+	data = data[:size]
 	_, err = io.ReadFull(this.r, data)
 	return
 }
@@ -190,7 +189,8 @@ func (this *Conn) pong() error {
 		msg.Release()
 		// 如果发送缓冲区满，丢弃 PONG 是安全的，对方会在下一个周期重试 PING
 		// 或者对方发送业务数据时也会刷新活跃状态
-		return fmt.Errorf("send pong buffer full")
+		slog.Warn("pong", "err", "send pong buffer full") //pong 失败不应该关闭链接
+		return nil
 	}
 	return nil
 }
@@ -288,9 +288,7 @@ func (this *Conn) readPump() error {
 			}
 		case flag_ping:
 			// 收到 PING，回复 PONG
-			if err := this.pong(); err != nil {
-				return err
-			}
+			this.pong()
 		case flag_pong:
 			// 收到 PONG，仅表示对方活着，ReadDeadline 已自动刷新，无需操作
 			// log.Println("receive pong")
