@@ -282,7 +282,7 @@ func (this *Conn) readPump() error {
 						}
 					}()
 					if err := this.handler.HandleMsg(body); err != nil {
-						slog.Error("handler msg ", "err", err)
+						slog.Error("handler msg", "err", err)
 					}
 				}()
 			}
