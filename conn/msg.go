@@ -22,6 +22,9 @@ func (m *msg) Release() {
 	if m == nil {
 		return
 	}
+	if m.opt != nil && m.opt.SendDeferFn != nil {
+		m.opt.SendDeferFn()
+	}
 	m.reset()
 	msgPool.Put(m)
 }

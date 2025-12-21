@@ -13,7 +13,7 @@ func Options() *Option {
 
 type Option struct {
 	ReadTimeout               *time.Duration //仅限于握手阶段的超时
-	ReadTimeoutFactor         *float64       // 读超时倍数因子，默认2.2
+	ReadTimeoutFactor         *float64       //超时的因子，由后面的公式计算出超时时间time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
 	WriteTimeout              *time.Duration
 	SendChanTimeout           *time.Duration //当设置值小于或者等于0的时候会在满buff的时候自动丢弃
 	HeartInterval             *time.Duration
@@ -21,6 +21,7 @@ type Option struct {
 	OnCloseCallbackDiscardMsg func(data [][][]byte) //分线的数据包,并没有再次合起来{header,meta,body}
 	ReadBufferLimitSize       *uint64               // 最大支持读取缓冲区大小,防止内存被撑爆 default 100M
 	GenBufFn                  func() []byte         // 生成读取缓冲区函数
+	SendDeferFn               func()                // 发送后置函数，不管成功与否都会执行,应用场景，就是发送的[]byte,是池化的，发送又是异步，需要在发送完成或者失败，上报给上层
 }
 
 func (this *Option) SetReadTimeout(t time.Duration) *Option {
@@ -68,6 +69,11 @@ func (this *Option) SetGenBufFn(f func() []byte) *Option {
 	return this
 }
 
+func (this *Option) SetSendDeferFn(f func()) *Option {
+	this.SendDeferFn = f
+	return this
+}
+
 func (this *Option) merge(delta *Option) *Option {
 	if this == nil || delta == nil {
 		return nil
@@ -83,9 +89,15 @@ func (this *Option) merge(delta *Option) *Option {
 	if delta.OnCloseCallbackDiscardMsg != nil {
 		this.OnCloseCallbackDiscardMsg = delta.OnCloseCallbackDiscardMsg
 	}
+
 	if delta.GenBufFn != nil {
 		this.GenBufFn = delta.GenBufFn
 	}
+
+	if delta.SendDeferFn != nil {
+		this.SendDeferFn = delta.SendDeferFn
+	}
+
 	return this
 }
 

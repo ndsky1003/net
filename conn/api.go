@@ -54,6 +54,9 @@ func (this *Conn) Send(ctx context.Context, data []byte, opts ...*Option) (err e
 // WARNING: 线程安全
 func (this *Conn) Sends(ctx context.Context, data [][]byte, opts ...*Option) (err error) {
 	if this.closed.Load() {
+		if f := Options().Merge(opts...).SendDeferFn; f != nil {
+			f()
+		}
 		return ErrConnectionClosed
 	}
 	msg := msgPool.Get().(*msg)

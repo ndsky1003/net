@@ -154,6 +154,9 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	if err != nil {
 		return
 	}
+	if flag == flag_ping || flag == flag_pong {
+		return
+	}
 
 	size -= 1 // 减去 flag 的 1 字节
 
@@ -163,6 +166,7 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 	}
 	data = data[:size]
 	_, err = io.ReadFull(this.r, data)
+	// slog.Info("read", "data", data, "size", size, "err", err, "n", n)
 	return
 }
 
