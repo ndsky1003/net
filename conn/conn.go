@@ -43,7 +43,6 @@ type Conn struct {
 
 func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) (*Conn, error) {
 	opt := Options().
-		SetReadTimeout(5 * time.Second).
 		SetWriteTimeout(5 * time.Second).
 		SetReadTimeoutFactor(2.2).
 		SetHeartInterval(5 * time.Second).
@@ -51,11 +50,6 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) (
 		SetSendChanSize(1024).
 		SetReadBufferLimitSize(100 * 1024 * 1024). //100M
 		Merge(opts...)
-
-	if opt.ReadTimeout == nil || *opt.ReadTimeout == 0 {
-		timeout := time.Duration(float64(*opt.HeartInterval) * *opt.ReadTimeoutFactor)
-		opt.ReadTimeout = &timeout
-	}
 
 	if opt.GenBufFn == nil {
 		return nil, errors.New("GenBufFn is nil")
@@ -124,12 +118,11 @@ func (this *Conn) read(opts ...*Option) (flag byte, data []byte, err error) {
 		err = fmt.Errorf("GenBufFn is nil")
 		return
 	}
+	readTimeout := time.Duration(float64(*opt.HeartInterval) * *opt.ReadTimeoutFactor)
 	read_buf_limit_size := *opt.ReadBufferLimitSize
 	var deadline time.Time
-	if t := opt.ReadTimeout; t != nil {
-		if *t > 0 {
-			deadline = time.Now().Add(*t)
-		}
+	if readTimeout > 0 {
+		deadline = time.Now().Add(readTimeout)
 	}
 	if err = this.Conn.SetReadDeadline(deadline); err != nil {
 		return
@@ -259,16 +252,16 @@ func (this *Conn) writePump() (err error) {
 
 // readPump 负责从连接读取数据，并作为“看门狗”检测连接超时
 func (this *Conn) readPump() error {
-	heartInterval := *this.opt.HeartInterval
+	// heartInterval := *this.opt.HeartInterval
 	// 【修改点】优化超时策略
 	// 发送间隔是  heartInterval。
 	// 将超时设为 2.2 * heartInterval (或者 heartInterval + 2*time.Second)。
 	// 意义：允许丢失 1 个心跳包 (1)，并允许第 2 个心跳包 (2) 晚到 20% 的时间。
 	// 这比 2.0 倍敏感得多，能更快发现断连，同时防止轻微抖动导致的误断。
-	readTimeout := time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
+	// readTimeout := time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
 	for {
 		// 每次读取前设置 DeadLine，给连接“续命”
-		flag, body, err := this.read(Options().SetReadTimeout(readTimeout))
+		flag, body, err := this.read()
 		if err != nil {
 			// 如果超时，这里会返回 i/o timeout 错误
 			return fmt.Errorf("read error: %w", err)

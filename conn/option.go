@@ -12,21 +12,17 @@ func Options() *Option {
 }
 
 type Option struct {
-	ReadTimeout               *time.Duration //仅限于握手阶段的超时
+	HeartInterval             *time.Duration //心跳间隔
 	ReadTimeoutFactor         *float64       //超时的因子，由后面的公式计算出超时时间time.Duration(float64(heartInterval) * *this.opt.ReadTimeoutFactor)
 	WriteTimeout              *time.Duration
 	SendChanTimeout           *time.Duration //当设置值小于或者等于0的时候会在满buff的时候自动丢弃
-	HeartInterval             *time.Duration
 	SendChanSize              *int
 	OnCloseCallbackDiscardMsg func(data [][][]byte) //分线的数据包,并没有再次合起来{header,meta,body}
 	ReadBufferLimitSize       *uint64               // 最大支持读取缓冲区大小,防止内存被撑爆 default 100M
-	GenBufFn                  func() []byte         // 生成读取缓冲区函数
-	SendDeferFn               func()                // 发送后置函数，不管成功与否都会执行,应用场景，就是发送的[]byte,是池化的，发送又是异步，需要在发送完成或者失败，上报给上层
-}
-
-func (this *Option) SetReadTimeout(t time.Duration) *Option {
-	this.ReadTimeout = &t
-	return this
+	//这2个函数的主要作用就是将池化的data，由上游获取
+	GenBufFn    func() []byte // 生成读取缓冲区函数
+	SendDeferFn func()        // 发送后置函数，不管成功与否都会执行,应用场景，就是发送的[]byte,是池化的，发送又是异步，需要在发送完成或者失败，上报给上层
+	//SendDeferFn要保证将读取出来的数据写入到buf中才能释放,Send是异步的，所以需要这个控制，Write是同步的，不需要
 }
 
 func (this *Option) SetReadBufferLimitSize(delta uint64) *Option {
@@ -78,7 +74,6 @@ func (this *Option) merge(delta *Option) *Option {
 	if this == nil || delta == nil {
 		return nil
 	}
-	ut.ResolveOption(&this.ReadTimeout, delta.ReadTimeout)
 	ut.ResolveOption(&this.WriteTimeout, delta.WriteTimeout)
 	ut.ResolveOption(&this.SendChanTimeout, delta.SendChanTimeout)
 	ut.ResolveOption(&this.HeartInterval, delta.HeartInterval)
