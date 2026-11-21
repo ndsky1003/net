@@ -108,4 +108,4 @@ protocol.Options().
 
 - **zero-copy**：`Write` 返回只代表"已入队"，data 在 `writev` 完成前不能复用或归还。
 - `WriteToConn` / `Read` / `SetHandler` 只能在 `Serve()` 之前调用（握手阶段）。
-- 主动停连接用 `Close()`，不要直接调内部 `cancel`——它叫不醒阻塞中的读。
+- 主动停连接用 `Close()`（幂等）；cancel 传入的 ctx 也会让 `writePump` 退出并触发关闭。

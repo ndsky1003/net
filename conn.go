@@ -157,7 +157,7 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 	return c
 }
 
-// Close 主动关闭，幂等。要停连接请调它，不要只调 cancel——cancel 叫不醒阻塞中的 read。
+// Close 主动关闭，幂等。
 func (this *Conn) Close() error {
 	return this.CloseWithError(ErrConnClosed)
 }
@@ -440,7 +440,7 @@ func (this *Conn) writePump() (err error) {
 		var f *frame
 		select {
 		case <-this.ctx.Done():
-			return nil
+			return this.ctx.Err()
 		case f = <-this.sendChan:
 		case <-pingTimer.C:
 			// ping 走 TryWrite：writePump 自己是 sendChan 唯一的消费者，

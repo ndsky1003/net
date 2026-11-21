@@ -15,5 +15,5 @@
 - **zero-copy**：帧 body 直接引用调用方 `[]byte`，不复制。`Write` 返回只代表"已入队"，调用方在 writev 完成前不能复用/归还该 data。
 - `Conn` 有三个方法只能在 `Serve()` 之前用（握手阶段）：`WriteToConn`、`Read`、`SetHandler`。
 - 心跳/`pong` 必须走 `TryWrite`（非阻塞）：它们本身在 read/write pump 里执行，用阻塞 `Write` 会自己等自己死锁。
-- 主动停连接调 `Conn.Close()`（幂等），不要只调内部 `cancel`——cancel 叫不醒阻塞中的读。
+- 主动停连接调 `Conn.Close()`（幂等）；cancel 传入的 ctx 会让 `writePump` 退出并触发关闭。
 - 帧格式：`[magic 0xAA 1B][flag 1B][bodyLen 4B BigEndian][body]`，单帧上限 64KB（`conn.go` 顶部常量）。
