@@ -109,3 +109,4 @@ protocol.Options().
 - **zero-copy**：`Write` 返回只代表"已入队"，data 在 `writev` 完成前不能复用或归还。
 - `WriteToConn` / `Read` / `SetHandler` 只能在 `Serve()` 之前调用（握手阶段）。
 - 主动停连接用 `Close()`（幂等）；cancel 传入的 ctx 也会让 `writePump` 退出并触发关闭。
+- `MsgChanSize` 默认 512：高速小帧下读入速度可能超过 `Handler` 消费速度，`msgChan` 满会断连，需按需调大。
