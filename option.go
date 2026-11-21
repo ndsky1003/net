@@ -14,6 +14,7 @@ func resolveOption[T any](old **T, new *T) {
 const (
 	defaultMaxFrameSize   = 64 << 10 //64KB
 	defaultMaxBatchFrames = 512      // IOV_MAX=1024，每帧最多 2 个 iovec，一批最多 512 帧
+	defaultReadBlockSize  = 64 << 10 // 接收端把大 body 分块读入的粒度
 	defaultSendChanSize   = 30
 	defaultMsgChanSize    = defaultMaxBatchFrames // 最低得是 maxBatchFrames
 )
@@ -25,6 +26,7 @@ type Option struct {
 	WriteTimeoutFactor *float64       // 单次 writev 的上限 = HeartInterval * 该系数，默认 2.2
 	MaxFrameSize       *int           // 单帧 body 上限，默认 64KB
 	MaxBatchFrames     *int           // 一次 writev 最多攒多少帧，默认 512
+	ReadBlockSize      *int           // 接收端把大 body 分块读入的粒度，默认 64KB
 	SendChanSize       *int           // sendChan 缓冲，默认 30
 	MsgChanSize        *int           // msgChan 缓冲，默认 = MaxBatchFrames（最低得是这个值）
 }
@@ -73,6 +75,14 @@ func (this *Option) SetMaxBatchFrames(n int) *Option {
 	return this
 }
 
+func (this *Option) SetReadBlockSize(n int) *Option {
+	if this == nil {
+		return this
+	}
+	this.ReadBlockSize = &n
+	return this
+}
+
 func (this *Option) SetSendChanSize(n int) *Option {
 	if this == nil {
 		return this
@@ -105,6 +115,7 @@ func (this *Option) merge(opt *Option) {
 	resolveOption(&this.WriteTimeoutFactor, opt.WriteTimeoutFactor)
 	resolveOption(&this.MaxFrameSize, opt.MaxFrameSize)
 	resolveOption(&this.MaxBatchFrames, opt.MaxBatchFrames)
+	resolveOption(&this.ReadBlockSize, opt.ReadBlockSize)
 	resolveOption(&this.SendChanSize, opt.SendChanSize)
 	resolveOption(&this.MsgChanSize, opt.MsgChanSize)
 }

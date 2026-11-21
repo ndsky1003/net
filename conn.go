@@ -31,16 +31,30 @@ const (
 
 var ErrConnClosed = errors.New("connection closed")
 
-// Handler 处理收到的业务帧（flag_msg）的 body
+// Handler 处理收到的业务帧（flag_msg）的 body。
+// 一个大帧的 body 会被拆成多个块依次回调：remain 是本帧剩余未交付的字节数（不含当前 body），
+// remain == 0 表示当前块是本帧最后一块（一个完整数据包交付完毕）。
 type Handler interface {
-	HandleMsg(body []byte) error
+	HandleMsg(remain int, body []byte) error
+}
+
+// recvMsg 是 msgChan 的元素：一块 body 加上本帧剩余未交付的字节数。
+// chunk 表示这一块是否是大帧被分片后的一片，决定入队时是否阻塞背压。
+type recvMsg struct {
+	remain int
+	body   []byte
+	chunk  bool
 }
 
 // frame 一帧待发数据。hdr 内联（每帧一份，不能复用 scratch：帧会在 chan 和
-// net.Buffers 里排队，共享缓冲区会被后一帧覆盖）；body 直接引用调用方的字节，不复制。
+// net.Buffers 里排队，共享缓冲区会被后一帧覆盖）。
+// body 直接引用调用方的字节，不复制（零拷贝）；reader 非 nil 时表示流式帧，
+// 从 reader 边读边写，remain 是剩余未写字节数。
 type frame struct {
-	hdr  [frameHeaderSize]byte
-	body []byte
+	hdr    [frameHeaderSize]byte
+	body   []byte
+	reader io.Reader
+	remain int
 }
 
 func (this *Conn) newFrame(flag byte, data []byte) (*frame, error) {
@@ -62,6 +76,8 @@ var framePool = sync.Pool{
 func (this *frame) Release() {
 	this.hdr = [frameHeaderSize]byte{}
 	this.body = nil
+	this.reader = nil
+	this.remain = 0
 	framePool.Put(this)
 }
 
@@ -78,6 +94,7 @@ type Conn struct {
 
 	maxFrameSize   int
 	maxBatchFrames int
+	readBlockSize  int
 
 	// 只有 writePump 这一个 goroutine 从 socket 写；其他 goroutine 一律通过 sendChan 投递。
 	// sendChan 永远不 close：close 会和生产者竞态，靠 ctx + closed 收尾。
@@ -86,7 +103,7 @@ type Conn struct {
 
 	// 收侧按序队列：readPump 只负责入队，由唯一的 msgWorker 顺序调用 Handler。
 	// 这样单条连接的消息仍然严格按序，同时慢 Handler 不会阻塞读泵和心跳。
-	msgChan chan []byte
+	msgChan chan recvMsg
 
 	// nextDeadline / nextWriteDeadline 分别是 readPump、writePump 自己的检查点，
 	// 各自只有一个 goroutine 碰，不需要原子。
@@ -111,6 +128,7 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		SetWriteTimeoutFactor(2.2).
 		SetMaxFrameSize(defaultMaxFrameSize).
 		SetMaxBatchFrames(defaultMaxBatchFrames).
+		SetReadBlockSize(defaultReadBlockSize).
 		SetSendChanSize(defaultSendChanSize).
 		SetMsgChanSize(defaultMsgChanSize).
 		merges(opts...)
@@ -126,6 +144,10 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 	if *opt.MaxBatchFrames <= 0 {
 		slog.Warn("invalid max batch frames, fallback to default", "got", *opt.MaxBatchFrames, "default", defaultMaxBatchFrames)
 		*opt.MaxBatchFrames = defaultMaxBatchFrames
+	}
+	if *opt.ReadBlockSize <= 0 {
+		slog.Warn("invalid read block size, fallback to default", "got", *opt.ReadBlockSize, "default", defaultReadBlockSize)
+		*opt.ReadBlockSize = defaultReadBlockSize
 	}
 	if *opt.SendChanSize <= 0 {
 		slog.Warn("invalid send chan size, fallback to default", "got", *opt.SendChanSize, "default", defaultSendChanSize)
@@ -145,9 +167,10 @@ func New(ctx context.Context, conn net.Conn, handler Handler, opts ...*Option) *
 		writeTimeout:   time.Duration(float64(*opt.HeartInterval) * *opt.WriteTimeoutFactor),
 		maxFrameSize:   *opt.MaxFrameSize,
 		maxBatchFrames: *opt.MaxBatchFrames,
+		readBlockSize:  *opt.ReadBlockSize,
 		sendChan:       make(chan *frame, *opt.SendChanSize),
 		bufs:           make(net.Buffers, 0, *opt.MaxBatchFrames*2),
-		msgChan:        make(chan []byte, *opt.MsgChanSize),
+		msgChan:        make(chan recvMsg, *opt.MsgChanSize),
 	}
 	c.closed.Store(false)
 	c.ctx, c.cancel = context.WithCancel(ctx)
@@ -310,6 +333,31 @@ func (this *Conn) Write(data []byte) error {
 	}
 }
 
+// WriteReader 从 r 流式读取 size 字节作为一帧发送，发送端按 ReadBlockSize 分块读入，
+// 避免一次性把大文件读进内存；接收端仍按分块回调 HandleMsg。
+// 返回只代表"已入队"，r 的所有权要等整帧写完才交出去，此前不能复用/关闭 r。
+func (this *Conn) WriteReader(r io.Reader, size int) error {
+	if this.closed.Load() {
+		return this.closedErr()
+	}
+	if size > this.maxFrameSize {
+		return fmt.Errorf("frame size %d exceeds maximum %d", size, this.maxFrameSize)
+	}
+	f := framePool.Get().(*frame)
+	f.hdr[0] = magic
+	f.hdr[1] = flag_msg
+	binary.BigEndian.PutUint32(f.hdr[2:], uint32(size))
+	f.reader = r
+	f.remain = size
+	select {
+	case this.sendChan <- f:
+		return nil
+	case <-this.ctx.Done():
+		f.Release()
+		return this.closedErr()
+	}
+}
+
 // TryWrite 非阻塞投递。通道满就返回 false，由调用方决定丢弃还是报错。
 // pong 和 writePump 的心跳必须走这里：它们本身就在 writePump/readPump 里，
 // 用阻塞的 Write 会自己等自己，直接死锁。
@@ -330,6 +378,20 @@ func (this *Conn) TryWrite(flag byte, data []byte) bool {
 	}
 }
 
+// ensureWriteDeadline 在预算快用尽时续期写 deadline，保证任何一次写至少还剩 writeTimeout/4 额度。
+// 写 deadline 是兜底：对端已死时 write 会卡在 TCP 重传里，没有它 writePump 能挂几分钟。
+// 但和读侧一样不能每批都设：拿 fd 锁 + 起停 timer 在热路径上是白扔的开销。
+func (this *Conn) ensureWriteDeadline() error {
+	now := time.Now()
+	if this.nextWriteDeadline.IsZero() || now.After(this.nextWriteDeadline.Add(-this.writeTimeout/4)) {
+		this.nextWriteDeadline = now.Add(this.writeTimeout)
+		if err := this.conn.SetWriteDeadline(this.nextWriteDeadline); err != nil {
+			return fmt.Errorf("set write deadline: %w", err)
+		}
+	}
+	return nil
+}
+
 // writeBatch 把一批帧拼成 net.Buffers，一次 writev 发出。
 // 只能由 writePump 调用（this.bufs 无锁）。
 func (this *Conn) writeBatch(frames []*frame) error {
@@ -344,17 +406,8 @@ func (this *Conn) writeBatch(frames []*frame) error {
 		}
 	}
 
-	// 写 deadline 是兜底：对端已死时 writev 会卡在 TCP 重传里，
-	// 没有它 writePump 能挂几分钟，readPump 也一起挂死。
-	// 但和读侧一样不能每批都设：拿 fd 锁 + 起停 timer 在热路径上是白扔的开销，
-	// 实测 8 发布者 × 4 监听者场景下每秒约 20 万次 SetWriteDeadline。
-	// 预算快用尽才续期，这样任何一次 writev 至少还剩 writeTimeout/4 的额度。
-	now := time.Now()
-	if this.nextWriteDeadline.IsZero() || now.After(this.nextWriteDeadline.Add(-this.writeTimeout/4)) {
-		this.nextWriteDeadline = now.Add(this.writeTimeout)
-		if err := this.conn.SetWriteDeadline(this.nextWriteDeadline); err != nil {
-			return fmt.Errorf("set write deadline: %w", err)
-		}
+	if err := this.ensureWriteDeadline(); err != nil {
+		return err
 	}
 
 	// 必须传 this.conn，不能传 this：
@@ -368,8 +421,44 @@ func (this *Conn) writeBatch(frames []*frame) error {
 	return nil
 }
 
-// read 读一帧。固定 6 字节头（magic+flag+size），一次 ReadFull 就能拿到。
-func (this *Conn) read() (flag byte, body []byte, err error) {
+// writeStreamFrame 流式写一帧：先写帧头，再从 reader 分块读 body 写出，直到写完 remain。
+// 只能由 writePump 调用（串行写，不与 writeBatch 并发）。
+func (this *Conn) writeStreamFrame(f *frame) error {
+	if err := this.ensureWriteDeadline(); err != nil {
+		return err
+	}
+	if _, err := this.conn.Write(f.hdr[:]); err != nil {
+		return fmt.Errorf("write frame header: %w", err)
+	}
+	buf := make([]byte, min(f.remain, this.readBlockSize))
+	remain := f.remain
+	for remain > 0 {
+		n := min(remain, len(buf))
+		if _, err := io.ReadFull(f.reader, buf[:n]); err != nil {
+			return fmt.Errorf("read source: %w", err)
+		}
+		if err := this.ensureWriteDeadline(); err != nil {
+			return err
+		}
+		if _, err := this.conn.Write(buf[:n]); err != nil {
+			return fmt.Errorf("write frame body: %w", err)
+		}
+		remain -= n
+	}
+	return nil
+}
+
+// wrapReadErr 把底层读错误包装成可区分的文案：
+// 对端静默超时（read deadline 到期）与正常断开（EOF）/ 异常断开（reset）分开。
+func wrapReadErr(err error) error {
+	if os.IsTimeout(err) {
+		return fmt.Errorf("peer silent: %w", err)
+	}
+	return fmt.Errorf("read error: %w", err)
+}
+
+// readHeader 读并校验帧头，返回 flag 和 body 长度，不读 body。
+func (this *Conn) readHeader() (flag byte, size int, err error) {
 	if _, err = io.ReadFull(this.r, this.hbuf[:]); err != nil {
 		return
 	}
@@ -378,13 +467,21 @@ func (this *Conn) read() (flag byte, body []byte, err error) {
 		return
 	}
 	flag = this.hbuf[1]
-	size := binary.BigEndian.Uint32(this.hbuf[2:])
-	if size > uint32(this.maxFrameSize) {
+	size = int(binary.BigEndian.Uint32(this.hbuf[2:]))
+	if size > this.maxFrameSize {
 		err = fmt.Errorf("frame size %d exceeds maximum %d", size, this.maxFrameSize)
 		return
 	}
+	return
+}
+
+// read 读一帧并一次性读完整 body（握手 Read 用，body 通常很小）。
+func (this *Conn) read() (flag byte, body []byte, err error) {
+	var size int
+	if flag, size, err = this.readHeader(); err != nil {
+		return
+	}
 	if size == 0 {
-		// PING / PONG 帧只有 6 字节头
 		return
 	}
 	body = make([]byte, size)
@@ -393,6 +490,60 @@ func (this *Conn) read() (flag byte, body []byte, err error) {
 	// 全在 4% 的噪声底里。而 bufio 本身不能去：去掉它每帧多 2 次 syscall，吞吐掉 10%~16%。
 	_, err = io.ReadFull(this.r, body)
 	return
+}
+
+// readBody 把一个大 body 按 readBlockSize 分块读入并依次入队，
+// 每块的 remain 是剩余未交付字节数，0 表示本帧结束。
+// 大帧（size > readBlockSize）分片 chunk=true，阻塞背压避免 msgChan 满断连；
+// 小帧（单块）chunk=false，非阻塞满则断连。
+func (this *Conn) readBody(size int) error {
+	if size == 0 {
+		return this.enqueueMsg(recvMsg{})
+	}
+	chunk := size > this.readBlockSize
+	remain := size
+	for remain > 0 {
+		n := min(remain, this.readBlockSize)
+		body := make([]byte, n)
+		if _, err := io.ReadFull(this.r, body); err != nil {
+			return wrapReadErr(err)
+		}
+		remain -= n
+		if err := this.enqueueMsg(recvMsg{remain: remain, body: body, chunk: chunk}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// discardBody 在 handler 为空时跳过 body 的字节，保证字节流对齐。
+func (this *Conn) discardBody(size int) error {
+	if _, err := io.CopyN(io.Discard, this.r, int64(size)); err != nil {
+		return wrapReadErr(err)
+	}
+	return nil
+}
+
+// enqueueMsg 投递一块消息到 msgChan。
+// 分片（chunk=true）阻塞背压：大帧传输时 readPump 等 msgWorker 消费，避免 msgChan 满断连；
+// 完整帧（chunk=false）非阻塞，满则报错断连（业务消费太慢）。
+func (this *Conn) enqueueMsg(m recvMsg) error {
+	if m.chunk {
+		select {
+		case this.msgChan <- m:
+			return nil
+		case <-this.ctx.Done():
+			return this.ctx.Err()
+		}
+	}
+	select {
+	case this.msgChan <- m:
+		return nil
+	case <-this.ctx.Done():
+		return this.ctx.Err()
+	default:
+		return errors.New("msgChan is full")
+	}
 }
 
 // ping 由 writePump 的 pingTimer 调用（只有空闲时才会触发），非阻塞投递
@@ -436,17 +587,33 @@ func (this *Conn) writePump() (err error) {
 		}
 	}()
 
+	var pending *frame // drain 时撞到的流式帧，留到下一轮写
 	for {
 		var f *frame
-		select {
-		case <-this.ctx.Done():
-			return this.ctx.Err()
-		case f = <-this.sendChan:
-		case <-pingTimer.C:
-			// ping 走 TryWrite：writePump 自己是 sendChan 唯一的消费者，
-			// 用阻塞的 Write 会自己等自己。通道满就跳过这个周期。
-			this.ping()
-			pingTimer.Reset(this.heartInterval)
+		if pending != nil {
+			f = pending
+			pending = nil
+		} else {
+			select {
+			case <-this.ctx.Done():
+				return this.ctx.Err()
+			case f = <-this.sendChan:
+			case <-pingTimer.C:
+				// ping 走 TryWrite：writePump 自己是 sendChan 唯一的消费者，
+				// 用阻塞的 Write 会自己等自己。通道满就跳过这个周期。
+				this.ping()
+				pingTimer.Reset(this.heartInterval)
+				continue
+			}
+		}
+
+		// 流式帧单独写：边读边写，不攒批
+		if f.reader != nil {
+			if err = this.writeStreamFrame(f); err != nil {
+				return err
+			}
+			f.Release()
+			this.resetPing(pingTimer)
 			continue
 		}
 
@@ -456,10 +623,14 @@ func (this *Conn) writePump() (err error) {
 		for len(batch) < this.maxBatchFrames {
 			select {
 			case f = <-this.sendChan:
-				batch = append(batch, f)
 			default:
 				break drain
 			}
+			if f.reader != nil {
+				pending = f
+				break drain
+			}
+			batch = append(batch, f)
 		}
 
 		if err = this.writeBatch(batch); err != nil {
@@ -470,15 +641,19 @@ func (this *Conn) writePump() (err error) {
 		}
 		batch = batch[:0]
 
-		// 刚写过数据，连接活跃，把 PING 推后一个周期
-		if !pingTimer.Stop() {
-			select {
-			case <-pingTimer.C:
-			default:
-			}
-		}
-		pingTimer.Reset(this.heartInterval)
+		this.resetPing(pingTimer)
 	}
+}
+
+// resetPing 刚写过数据，连接活跃，把 PING 推后一个周期。
+func (this *Conn) resetPing(pingTimer *time.Timer) {
+	if !pingTimer.Stop() {
+		select {
+		case <-pingTimer.C:
+		default:
+		}
+	}
+	pingTimer.Reset(this.heartInterval)
 }
 
 // readPump 负责从连接读取数据。
@@ -494,26 +669,19 @@ func (this *Conn) readPump() error {
 			}
 		}
 
-		flag, body, err := this.read()
+		flag, size, err := this.readHeader()
 		if err != nil {
-			// 对端静默超时（read deadline 到期）单独包装成"判死"文案，
-			// 便于与对端正常断开（EOF）/ 异常断开（reset）区分；底层错误用 %w 保留。
-			if os.IsTimeout(err) {
-				return fmt.Errorf("peer silent: %w", err)
-			}
-			return fmt.Errorf("read error: %w", err)
+			return wrapReadErr(err)
 		}
 
 		switch flag {
 		case flag_msg:
-			if this.handler != nil {
-				select {
-				case this.msgChan <- body:
-				case <-this.ctx.Done():
-					return this.ctx.Err()
-				default:
-					return errors.New("msgChan is full")
+			if this.handler == nil {
+				if err := this.discardBody(size); err != nil {
+					return err
 				}
+			} else if err := this.readBody(size); err != nil {
+				return err
 			}
 		case flag_ping:
 			// 收到 PING，回复 PONG
@@ -532,13 +700,13 @@ func (this *Conn) readPump() error {
 func (this *Conn) msgWorker() {
 	for {
 		select {
-		case body := <-this.msgChan:
-			this.dispatchMsg(body)
+		case m := <-this.msgChan:
+			this.dispatchMsg(m)
 		case <-this.ctx.Done():
 			for {
 				select {
-				case body := <-this.msgChan:
-					this.dispatchMsg(body)
+				case m := <-this.msgChan:
+					this.dispatchMsg(m)
 				default:
 					return
 				}
@@ -547,7 +715,7 @@ func (this *Conn) msgWorker() {
 	}
 }
 
-func (this *Conn) dispatchMsg(body []byte) {
+func (this *Conn) dispatchMsg(m recvMsg) {
 	h := this.handler
 	if h == nil {
 		return
@@ -557,7 +725,7 @@ func (this *Conn) dispatchMsg(body []byte) {
 			slog.Error("handler panic", "err", r)
 		}
 	}()
-	if err := h.HandleMsg(body); err != nil {
+	if err := h.HandleMsg(m.remain, m.body); err != nil {
 		slog.Error("handler msg", "err", err)
 	}
 }
